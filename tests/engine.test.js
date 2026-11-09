@@ -250,8 +250,9 @@ test('старт: 4 цеха ЦДНГ, скважины распределены
 
 test('отчёт месяца по цехам останавливает время до решения', () => {
   const s = E.newGame({ seed: 9 }); E.act(s, 'resolve', { i: 1 });
-  E.advance(s, 40);
+  for (let i = 0; i < 60 && !(s.report && s.report.open); i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); E.advance(s, 1); }
   assert.strictEqual(E.iso(s.day), '2000-01-31', 'время остановилось на закрытии месяца');
+  assert.strictEqual(E.advance(s, 3), 0, 'пока отчёт открыт, время стоит');
   assert.ok(s.report && s.report.open && s.report.m === '2000-01');
   const rows = s.cdReports[0].rows;
   assert.strictEqual(rows.length, 4);
@@ -262,7 +263,8 @@ test('отчёт месяца по цехам останавливает вре�
 });
 
 test('эффективность начальника влияет на добычу цеха', () => {
-  const run = eff => { const s = fresh({ seed: 21 }); E.act(s, 'accept', { id: s.offers[0].id }); for (const c of s.cdngs) c.chief.eff = eff; runDays(s, 25); return s.daily.slice(-20).reduce((a, d) => a + d.oil, 0); };
+  const base = fresh({ seed: 21 }); runDays(base, 3);
+  const run = eff => { const s = E.deserialize(E.serialize(base)); for (const c of s.cdngs) c.chief.eff = eff; E.tick(s); return s.today.potOil; };
   const lo = run(0.6), hi = run(1.3);
   assert.ok(hi > lo * 1.05, `сильные начальники дают больше нефти: ${hi} vs ${lo}`);
 });
@@ -312,7 +314,7 @@ test('кадровый реестр: каждый работник — чело�
   for (const p of s.people) {
     const age = E.personAge(s, p);
     assert.ok(age >= 20 && age <= 64, 'возраст ' + age);
-    assert.ok(p.name.split(' ').length === 3, 'ФИО из трёх частей');
+    assert.ok(p.name.split(' ').length === 2 && !/[ӘәҒғҚқҢңӨөҰұҮүІі]/.test(p.name), 'Фамилия Имя, без казахских букв');
     assert.ok(E.personSalary(s, p).total > 0 && p.grade >= 2 && p.grade <= 6);
     assert.ok(E.yearsToPension(s, p) >= 0);
   }
@@ -321,8 +323,9 @@ test('кадровый реестр: каждый работник — чело�
 
 test('ФОТ месяца = сумме зарплат работников и начальников', () => {
   const s = fresh();
+  runDays(s, E.daysToNextMonth(s) - 1);
   const exp = s.people.reduce((a, p) => a + E.personSalary(s, p).total, 0) + s.cdngs.reduce((a, c) => a + (c.chief ? c.chief.salary * s.priceIndex : 0), 0);
-  runDays(s, E.daysToNextMonth(s));
+  runDays(s, 1);
   const fot = s.ledger.find(l => l.cat === 'ФОТ' && /Заработная плата/.test(l.note));
   assert.ok(Math.abs(-fot.a - exp) / exp < 0.02, `${-fot.a} vs ${exp}`);
 });
@@ -363,6 +366,101 @@ test('квалификация влияет на эффективность по
   for (const p of s.people) p.skill = 0.6; const lo = E.coverage(s).dept.ckppn;
   for (const p of s.people) p.skill = 1.3; const hi = E.coverage(s).dept.ckppn;
   assert.ok(hi > lo, `${hi} > ${lo}`);
+});
+
+test('начальники — мужчины; женщины ≈1% и только в экологии, геологии, бухгалтерии', () => {
+  let fem = 0, ppl = 0, femP = 0, wrong = 0;
+  for (let seed = 1; seed <= 30; seed++) {
+    const s = E.newGame({ seed });
+    E.act(s, 'resolve', { i: 1 }); E.act(s, 'setting', { key: 'monthReport', value: false });
+    const c = s.cdngs[0]; E.act(s, 'chief', { cdng: c.id, op: 'fire' });
+    for (const x of s.cdngs) if (x.chief && x.chief.g !== 'm') fem++;
+    for (const k of c.candidates) if (k.g !== 'm') fem++;
+    // естественный штат: на каждые ~12 рабочих добывающих служб — 1 человек из экологии/геологии/бухгалтерии
+    for (const r of ['op', 'prs', 'mech', 'drv']) E.act(s, 'hire', { role: r, n: 9 });
+    for (const r of ['hse', 'geo', 'aup']) E.act(s, 'hire', { role: r, n: 1 });
+    runDays(s, 25);
+    ppl += s.people.length; femP += s.people.filter(p => p.g === 'f').length;
+    wrong += s.people.filter(p => p.g === 'f' && !['hse', 'geo', 'aup'].includes(p.role)).length;
+  }
+  assert.strictEqual(fem, 0, 'женщин среди начальников и кандидатов нет');
+  assert.strictEqual(wrong, 0, 'женщины только в экологии, геологии и бухгалтерии');
+  const share = femP / ppl; assert.ok(share > 0.002 && share < 0.04, `доля женщин ${share}`);
+});
+test('фамилии не повторяются', () => {
+  const s = fresh();
+  for (const r of ['op', 'prs', 'mech', 'drv', 'elec']) E.act(s, 'hire', { role: r, n: 30 });
+  runDays(s, 25);
+  const names = s.people.map(p => E.baseLast(p.name)).concat(s.cdngs.map(c => E.baseLast(c.chief.name)));
+  assert.ok(names.length > 150);
+  assert.strictEqual(new Set(names).size, names.length, 'все фамилии разные');
+});
+test('миграция сохранения: начальники-мужчины, женщины ≤1%, фамилии без повторов', () => {
+  const s = fresh(); const o = JSON.parse(E.serialize(s));
+  delete o.genderV; o.cdngs[0].chief.g = 'f'; o.cdngs[0].chief.name = 'Сарсенова Гульнара';
+  for (const p of o.people) { p.g = 'f'; p.name = 'Ахметова Айгуль'; }
+  const m = E.deserialize(JSON.stringify(o));
+  assert.strictEqual(m.cdngs[0].chief.g, 'm');
+  assert.ok(m.people.filter(p => p.g === 'f').length <= Math.max(1, Math.round(m.people.length * 0.01)));
+  const names = m.people.map(p => E.baseLast(p.name)).concat(m.cdngs.map(c => E.baseLast(c.chief.name)));
+  assert.strictEqual(new Set(names).size, names.length);
+});
+
+test('банк: срочный депозит капитализируется и возвращается в срок с доходом', () => {
+  const s = fresh(); const cash0 = s.cash;
+  const d = E.act(s, 'deposit', { amount: 500e6, type: 't6' });
+  assert.ok(d.end > s.day && d.rate > E.depositRate(s, 'demand'));
+  runDays(s, 200);
+  assert.ok(!s.deposits.includes(d), 'депозит закрыт по сроку');
+  const inc = s.ledger.filter(l => l.cat === 'Проценты по депозитам' && /депозит №/.test(l.note)).reduce((a, l) => a + l.a, 0);
+  assert.ok(inc > 500e6 * d.rate * 0.4, 'получен доход ' + inc);
+});
+test('банк: досрочное снятие срочного — проценты по ставке «до востребования»', () => {
+  const s = fresh(); const d = E.act(s, 'deposit', { amount: 300e6, type: 't24' });
+  runDays(s, 100); const r = E.act(s, 'withdraw', { id: d.id });
+  assert.ok(r.returned > 300e6 && r.returned < d.amount + 1);
+});
+test('ОТ: учения повышают готовность, медосмотр и обучение — культуру и сроки', () => {
+  const s = fresh(); const r0 = s.hse.readiness;
+  E.act(s, 'hse', { op: 'drill', kind: 'fire' }); assert.ok(s.hse.readiness > r0);
+  assert.throws(() => E.act(s, 'hse', { op: 'drill', kind: 'fire' }), /30 дней/);
+  E.act(s, 'hse', { op: 'medical' }); assert.strictEqual(s.hse.lastMed, s.day);
+  const c0 = s.hse.culture; E.act(s, 'hse', { op: 'training' }); assert.ok(s.hse.culture > c0);
+});
+test('ОТ: риск травм выше без СИЗ, при износе и без медосмотра', () => {
+  const s = fresh(); E.act(s, 'hse', { op: 'medical' });
+  const k1 = E.hseRisk(s).k;
+  s.stock.ppe = 0; s.hse.lastMed = s.day - 400; for (const f of s.fac) f.health = 20;
+  assert.ok(E.hseRisk(s).k > k1 * 2);
+});
+test('ОТ: несчастные случаи происходят, пострадавший на больничном и не работает', () => {
+  const s = fresh(); s.stock.ppe = 0; s.hse.culture = 0; s.hse.lastMed = -999;
+  for (let i = 0; i < 1500 && !s.hse.injuries.length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.stock.ppe = 0; E.advance(s, 1); }
+  assert.ok(s.hse.injuries.length > 0, 'травма случилась');
+  const inj = s.hse.injuries[0]; const p = s.people.find(x => x.name === inj.name);
+  if (p && p.sickUntil > s.day) { const cov = E.coverage(s); assert.ok(cov.role[p.role] <= s.staff[p.role].n / Math.max(1, cov.need[p.role]) + 1e-9); }
+  assert.ok(s.ledger.some(l => l.cat === 'Возмещение вреда'));
+});
+test('проверки госорганов: при нарушениях — штраф с перечнем, при порядке — без штрафа', () => {
+  const s = fresh(); s.hse.lastMed = -999; s.hse.lastTraining = -999; s.stock.ppe = 0;
+  const has = () => s.hse.fines.find(f => /труда/.test(f.org) && f.reasons.some(r => /медосмотр/.test(r)));
+  for (let m = 0; m < 60 && !has() && !s.gameOver; m++) { s.trust = 60; runDays(s, E.daysToNextMonth(s)); }
+  const f = has();
+  assert.ok(f && f.reasons.some(r => /медосмотр/.test(r)) && f.amount > 0);
+});
+test('ПНГ: без утилизации газ горит на факеле и начисляется плата за эмиссии', () => {
+  const s = fresh(); for (const o of s.offers.slice()) try { E.act(s, 'accept', { id: o.id }); } catch (e) { }
+  runDays(s, E.daysToNextMonth(s));
+  assert.ok(s.today.gas.prod > 0 && s.today.gas.flare > 0);
+  assert.ok(s.ledger.some(l => l.cat === 'Плата за эмиссии'));
+});
+test('рейтинг по 5 параметрам: у каждого места в каждом параметре, балл 0–100', () => {
+  const s = fresh(); runDays(s, 40);
+  const lb = E.leaderboard(s); const me = lb.find(x => x.me);
+  assert.strictEqual(lb.length, 100);
+  assert.deepStrictEqual(Object.keys(me.pr).sort(), ['cap', 'cost', 'hse', 'prod', 'profit']);
+  assert.ok(me.score >= 0 && me.score <= 100 && me.rank >= 1 && me.rank <= 100);
+  for (let i = 1; i < lb.length; i++) assert.ok(lb[i - 1].score >= lb[i].score);
 });
 
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ', есть ошибки' : ''}`);

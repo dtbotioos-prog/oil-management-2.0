@@ -433,3 +433,41 @@ button.warnb{background:#3d2c0e;border-color:#8a6420;color:#f3cf86}
 .tof .row{gap:10px;margin-bottom:6px}
 @media (min-width:640px){.people{grid-template-columns:repeat(2,1fr)}.pc-grid{grid-template-columns:repeat(4,1fr)}.pc-a button{flex:0 1 auto}}
 @media (min-width:1400px){.people{grid-template-columns:repeat(3,1fr)}}
+
+/* ---------- эффекты ---------- */
+.t-date.pulse b{animation:dpulse .5s ease-out}
+@keyframes dpulse{0%{color:var(--brand2);transform:translateY(-2px)}100%{color:var(--text);transform:none}}
+.float{position:fixed;z-index:60;transform:translateX(-50%);font-weight:800;font-size:14px;padding:3px 9px;border-radius:10px;pointer-events:none;animation:floatup 1.7s ease-out forwards;white-space:nowrap}
+.float.pos{color:#8ff0bd;background:rgba(18,62,44,.92);border:1px solid #1f7a52}.float.neg{color:#ffb0ae;background:rgba(91,29,29,.92);border:1px solid #8a2b2b}
+@keyframes floatup{0%{opacity:0;transform:translate(-50%,6px)}15%{opacity:1;transform:translate(-50%,0)}75%{opacity:1}100%{opacity:0;transform:translate(-50%,-26px)}}
+.confetti{position:fixed;inset:0;pointer-events:none;z-index:70;overflow:hidden}
+.confetti i{position:absolute;top:-12px;width:8px;height:12px;border-radius:2px;animation:cfall 2s cubic-bezier(.25,.6,.4,1) forwards}
+@keyframes cfall{0%{opacity:1;transform:translateY(0) rotate(0)}100%{opacity:0;transform:translateY(105vh) rotate(720deg)}}
+.app.shake{animation:shake .5s}
+@keyframes shake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}30%,50%,70%{transform:translateX(-7px)}40%,60%{transform:translateX(7px)}}
+.kpi .k-v,.chip b{font-variant-numeric:tabular-nums}
+button:active{filter:brightness(1.2)}
+.modal.event .ev-ic{animation:evpulse 1.6s ease-in-out infinite}
+@keyframes evpulse{50%{box-shadow:0 0 0 8px rgba(229,57,53,.12)}}
+
+/* ---------- банк, ОТ, аналитика, рейтинг ---------- */
+.deps{display:grid;gap:8px}
+.dep,.depi{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.dep small{color:var(--muted);font-size:12.5px}.dep button{align-self:flex-start}
+.rate{font-weight:800;color:var(--good);font-size:16px}.rate.bad{color:var(--bad)}
+.deplist{display:grid;gap:8px}
+.rparams{display:grid;gap:10px}
+.rp{background:var(--panel2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:5px}
+.rp-h{display:flex;justify-content:space-between;font-size:13.5px}.rp-h span{font-weight:800}
+.rp-v{font-size:17px;font-weight:700}.rp-v small{font-size:11.5px;color:var(--muted);font-weight:500}
+.lbr .lbp{grid-column:2/-1;font-size:11px;color:var(--muted)}
+.hsea{display:grid;gap:8px}
+.hsei{display:flex;gap:10px;align-items:center;justify-content:space-between;background:var(--panel2);border-radius:12px;padding:10px}
+.hsei>div{display:flex;flex-direction:column;gap:2px;min-width:0}.hsei b{font-size:13.5px}.hsei small{font-size:12px;color:var(--muted)}
+.hsei small.tbad{color:var(--bad)}.hsei small.tgood{color:var(--good)}
+.bignum{font-size:30px;line-height:1}
+.kpi.lnk{text-align:left;white-space:normal;font-weight:400;padding:10px 12px}
+.kpi.lnk:hover{border-color:var(--info)}
+.hb span{white-space:normal}
+@media (min-width:640px){.deps{grid-template-columns:repeat(2,1fr)}.deplist{grid-template-columns:repeat(2,1fr)}.rparams{grid-template-columns:repeat(3,1fr)}}
+@media (min-width:1024px){.deps{grid-template-columns:repeat(4,1fr)}.rparams{grid-template-columns:repeat(5,1fr)}.kpis.kpi4{grid-template-columns:repeat(4,1fr)}}

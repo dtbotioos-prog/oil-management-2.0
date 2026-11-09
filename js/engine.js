@@ -72,9 +72,10 @@
 
   /* ===================== финансы ===================== */
   const PNL = {
-    revenue: ['Продажа нефти', 'Спотовая продажа', 'Проценты по депозитам', 'Прочие доходы'],
+    revenue: ['Продажа нефти', 'Спотовая продажа', 'Продажа газа', 'Проценты по депозитам', 'Прочие доходы'],
     opex: ['ФОТ', 'Соц. налог', 'Электроэнергия', 'Топливо и газ', 'Закупка МТР', 'Транспорт нефти', 'Ремонт и ТО',
-      'Подрядные работы', 'Обслуживание фонда', 'Утилизация воды', 'Найм персонала', 'Штрафы и неустойки', 'Прочие расходы', 'Промывка нефти'],
+      'Подрядные работы', 'Обслуживание фонда', 'Утилизация воды', 'Найм персонала', 'Штрафы и неустойки', 'Прочие расходы', 'Промывка нефти',
+      'Охрана труда и ПБ', 'Возмещение вреда', 'Плата за эмиссии'],
     taxes: ['НДПИ', 'Рентный налог', 'КПН', 'Налог на имущество'],
     interest: ['Проценты по кредитам'],
     capex: ['Капвложения', 'Технологии'],
@@ -147,8 +148,10 @@
   function staffNeed(s) { const a = assetSummary(s); const o = {}; for (const r of D.ROLES) o[r.key] = r.need(a); return o; }
   function coverage(s) {
     const need = staffNeed(s); const cov = {}; const byDept = {};
+    const active = {}; if (s.people) for (const p of s.people) if (!(p.sickUntil > s.day)) active[p.role] = (active[p.role] || 0) + 1;
     for (const r of D.ROLES) {
-      const c = need[r.key] ? clamp(s.staff[r.key].n / need[r.key], 0, 1.2) : 1;
+      const have = s.people ? (active[r.key] || 0) : s.staff[r.key].n;
+      const c = need[r.key] ? clamp(have / need[r.key], 0, 1.2) : 1;
       cov[r.key] = c;
       (byDept[r.dept] = byDept[r.dept] || []).push(Math.min(1, c));
     }
@@ -306,7 +309,10 @@
     function sim(k) {
       const Ein = k * (O + W * (1 - sep)), EinW = k * W * (1 - sep), Win = k * W * sep;
       const vol = tech0 + Ein; const wf = vol > 0 ? (tech0 * s.techWf + EinW) / vol : 0;
-      let P = Math.min(capCk, vol);
+      // рабочий уровень технологических РВС (отстой эмульсии): налив до ~45%, затем сработка до ~30%
+      const reserveT = techCap * 0.30;
+      const fillingT = s.flags.tFill !== false && tech0 < reserveT + techCap * 0.15;
+      let P = Math.min(capCk, vol, fillingT ? Ein * 0.6 : Math.max(vol - reserveT, Ein * 0.6));
       const resid = s.quality.water / 100;
       let product = P * (1 - wf) / (1 - resid);
       if (product > oilFree) { P = P * oilFree / product; product = oilFree; }
@@ -314,7 +320,12 @@
       const techAfter = vol - P;
       const wVol = water0 + Win + removedW;
       const injTarget = k * L * comp;
-      const injProduced = Math.min(capBkns, wVol, injTarget);
+      // неснижаемый остаток: БКНС не выкачивает водяные РВС ниже ~40%; пока уровень ниже — забирает только 70% дневного притока
+      const reserve = waterCap * (s.ppd.reserve != null ? s.ppd.reserve : 40) / 100;
+      const inflowW = Win + removedW;
+      // цикл «налив до остатка+15% → сработка до остатка»: уровень в РВС живой, как у операторов
+      const filling = s.flags.wFill !== false && water0 < reserve + waterCap * 0.15;
+      const injProduced = Math.min(capBkns, wVol, injTarget, filling ? inflowW * 0.55 : Math.max(wVol - reserve, inflowW * 0.55));
       const injSource = Math.min(capBkns - injProduced, srcCap, Math.max(0, injTarget - injProduced));
       let wAfter = wVol - injProduced; let util = 0;
       if (wAfter > waterCap) { util = Math.min(utilCap, wAfter - waterCap); wAfter -= util; }
@@ -343,8 +354,12 @@
     s.quality = qualityOf(s, loadCk, doseEff, cov.dept.ckppn);
     s.techWf = res.techAfter > 0 ? clamp((tech0 * s.techWf + res.EinW - res.P * res.wf) / res.techAfter, 0, 0.6) : s.techWf;
     fillTanks(s, 'tech', res.techAfter - tech0);
+    { const tc = tankCap(s, 'tech'), lv = tankVol(s, 'tech');
+      if (lv >= tc * 0.45) s.flags.tFill = false; else if (lv <= tc * 0.30 + 1) s.flags.tFill = true; }
     fillTanks(s, 'oil', res.product);
     fillTanks(s, 'water', res.wAfter - water0);
+    { const wc = tankCap(s, 'water'), rsv = wc * (s.ppd.reserve != null ? s.ppd.reserve : 40) / 100, lv = tankVol(s, 'water');
+      if (lv >= rsv + wc * 0.15) s.flags.wFill = false; else if (lv <= rsv + 1) s.flags.wFill = true; }
     const inhNeed = (res.Win + res.removedW) * 0.012;
     const inhUse = Math.min(inhNeed, s.stock.inhib); s.stock.inhib -= inhUse;
     s.flags.inhibOk = inhNeed <= 0 || inhUse >= inhNeed * 0.95;
@@ -383,7 +398,12 @@
     /* --- износ объектов --- */
     const WEAR = { agzu: 0.01, upsv: 0.012, ckppn: 0.012, bkns: 0.02, pump_ext: 0.015, substation: 0.006, gtes: 0.015, dgu: 0.01, ses: 0.006, cdng: 0.004 };
     for (const f of s.fac) {
-      if (f.status === 'service') { f.serviceDays--; continue; }
+      if (f.status === 'service') {
+        f.serviceDays--;
+        // после аварии РВС возвращается в работу, когда истёк срок восстановления (если на нём нет подрядных работ)
+        if (f.serviceDays <= 0 && !s.projects.some(p => p.target === f.id)) { f.status = 'ok'; log(s, `${f.name}: восстановительные работы завершены, резервуар снова в работе`, 'good'); }
+        continue;
+      }
       let wr = D.BUILD[f.type].tank ? (s.flags.inhibOk ? 0.008 : 0.02) : (WEAR[f.type] || 0.01);
       f.health = clamp(f.health - wr * wearMul, 1, 100);
       if (f.status === 'ok' && f.health < 25 && !D.BUILD[f.type].tank && rnd(s) < 0.004) {
@@ -406,6 +426,30 @@
     transact(s, -kwh(used.grid) * 2.6 * idx(s), 'Электроэнергия', 'Сетевая электроэнергия', 'grid');
     if (used.gtes > 0) transact(s, -kwh(used.gtes) * 0.7 * idx(s), 'Электроэнергия', 'Генерация ГТЭС (попутный газ)', 'gtes');
     if (used.dgu > 0) s.stock.diesel = Math.max(0, s.stock.diesel - kwh(used.dgu) * 0.27);
+    // попутный нефтяной газ: подогрев печей, ГТЭС, сдача на ГПЗ, остальное — факел
+    const H = s.hse;
+    const gasProd = dayOil * 85 * (1 + 0.4 * (1 - clamp(R.remaining / R.total, 0, 1)));
+    const gasHeat = Math.min(gasProd, res.P * Math.max(0, s.ckppnSet.temp - 20) * 0.03);
+    const gasGtes = Math.min(gasProd - gasHeat, kwh(used.gtes || 0) * 0.32);
+    const gasSale = Math.min(gasProd - gasHeat - gasGtes, capOf(s, 'gascomp') * energyF);
+    if (gasSale > 0) transact(s, gasSale * 4 * idx(s), 'Продажа газа', 'Сдача ПНГ на газоперерабатывающий завод', 'gas');
+    const gasUsed = gasHeat + gasGtes + gasSale;
+    s.mGas += gasProd; s.mGasUsed += gasUsed; s.mFlare += gasProd - gasUsed;
+    today.gas = { prod: gasProd, heat: gasHeat, gtes: gasGtes, sale: gasSale, flare: gasProd - gasUsed, util: gasProd > 0 ? gasUsed / gasProd : 1 };
+    // ОТ и ПБ: износ готовности и культуры безопасности, несчастные случаи
+    H.readiness = clamp(H.readiness - 0.05, 0, 100); H.culture = clamp(H.culture - 0.03, 0, 100);
+    H.daysNoInj++;
+    hseDaily(s, cov);
+    // аналитика фонда
+    const prodWellsAll = s.wells.filter(w => w.type === 'sk' || w.type === 'ecn');
+    s.mWellDays += prodWellsAll.length; s.mWorkDays += prodWellsAll.filter(w => w.status === 'work' && w.connected && (w.today || 0) > 0).length;
+    // срочные депозиты: возврат при наступлении срока
+    for (const d of s.deposits.filter(d => d.end != null && s.day >= d.end)) {
+      transact(s, d.principal, 'Депозит закрыт', `Возврат депозита №${d.id} (${D.DEPOSITS[d.type].name})`);
+      if (d.amount > d.principal) transact(s, d.amount - d.principal, 'Проценты по депозитам', `Капитализированные проценты, депозит №${d.id}`);
+      log(s, `Депозит №${d.id} закрыт по сроку: возвращено ${fmtMoney(d.amount)} (доход ${fmtMoney(d.amount - d.principal)})`, 'good');
+    }
+    s.deposits = s.deposits.filter(d => !(d.end != null && s.day >= d.end));
     // ГСМ транспорта и СИЗ
     s.stock.diesel = Math.max(0, s.stock.diesel - s.wells.length * 3 * (0.6 + 0.4 * cov.dept.trans));
     s.stock.ppe = Math.max(0, s.stock.ppe - assetSummary(s).staff / 365);
@@ -454,22 +498,31 @@
 
   /* ===================== кадровый реестр ===================== */
   const FEM_LAST = l => (/(ов|ев|ин)$/.test(l) ? l + 'а' : l);
-  function patronymic(f, female) {
-    if (/ий$/.test(f)) return f.slice(0, -2) + (female ? 'иевна' : 'иевич');
-    if (/[ае]й$/.test(f)) return f.slice(0, -1) + (female ? 'евна' : 'евич');
-    return f + (female ? 'овна' : 'ович');
+  // фамилия без женского окончания — для проверки повторов
+  const baseLast = name => { const l = String(name || '').split(' ')[0]; return /(ова|ева|ина)$/.test(l) ? l.slice(0, -1) : l; };
+  function usedSurnames(s) {
+    const u = new Set(); const add = x => { if (x && x.name) u.add(baseLast(x.name)); };
+    for (const p of s.people || []) add(p);
+    for (const c of s.cdngs || []) { add(c.chief); if (c.incoming) add(c.incoming.chief); for (const k of c.candidates || []) add(k); }
+    return u;
+  }
+  function kazName(s, g) {
+    const used = usedSurnames(s); const free = D.LAST.filter(l => !used.has(l));
+    const first = pick(s, g === 'f' ? D.FIRST_F : D.FIRST_M), last = pick(s, free.length ? free : D.LAST);
+    return `${g === 'f' ? FEM_LAST(last) : last} ${first}`;
   }
   function makeFace(s, g, age) {
     return { skin: ri(s, 0, 4), hair: ri(s, 0, 3), hs: ri(s, 0, 2), eye: ri(s, 0, 2), mus: g === 'm' && rnd(s) < 0.3, beard: g === 'm' && rnd(s) < 0.12, gls: rnd(s) < 0.18 + (age > 45 ? 0.15 : 0), d: r2(rr(s, 0, 4)) };
   }
+  const FEM_DEPTS = ['hse', 'geo', 'aup'];
   function makePerson(s, role, o = {}) {
-    const g = o.g || (rnd(s) < (['aup', 'mts', 'hse', 'geo'].includes(D.ROLES.find(r => r.key === role).dept) ? 0.45 : 0.08) ? 'f' : 'm');
+    // коллектив ≈99% мужчин; женщины — только экология/ОТ, геология и бухгалтерия (АУП)
+    const g = o.g || (FEM_DEPTS.includes(D.ROLES.find(r => r.key === role).dept) && rnd(s) < 0.12 ? 'f' : 'm');
     const y = parts(s.day).y;
     const age = o.age != null ? o.age : ri(s, 21, 58);
-    const first = pick(s, g === 'f' ? D.FIRST_F : D.FIRST_M), lastM = pick(s, D.CHIEF_LAST), father = pick(s, D.FIRST_M);
     const prior = Math.max(0, Math.min(age - 19, o.prior != null ? o.prior : ri(s, 0, Math.max(0, age - 20))));
     const p = {
-      id: uid(s), role, g, name: `${g === 'f' ? FEM_LAST(lastM) : lastM} ${first} ${patronymic(father, g === 'f')}`,
+      id: uid(s), role, g, name: kazName(s, g),
       by: y - age, bm: ri(s, 1, 12), hired: o.hired || iso(s.day), prior,
       grade: clamp(o.grade || 2 + Math.min(4, Math.floor(prior / 6) + ri(s, 0, 1)), 2, 6),
       skill: r2(clamp(0.7 + prior * 0.012 + rr(s, -0.12, 0.15), 0.55, 1.3)), mood: ri(s, 55, 85), awards: 0, trained: 0, lastTrain: -999,
@@ -525,14 +578,9 @@
   }
 
   /* ===================== начальники цехов ===================== */
-  function chiefName(s, female) {
-    const f = pick(s, D.CHIEF_FIRST); const l = pick(s, D.CHIEF_LAST);
-    const fem = ['Айгуль', 'Галина', 'Жанар', 'Динара'].includes(f);
-    return `${fem ? (l.endsWith('ов') || l.endsWith('ев') || l.endsWith('ин') ? l + 'а' : l) : l} ${f}`;
-  }
+  const chiefName = (s, g) => kazName(s, g);
   function makeChief(s, effMin = 0.7, effMax = 1.2) {
-    const eff = r2(rr(s, effMin, effMax)); const name = chiefName(s);
-    const g = /(а|ова|ева)\s/.test(name + ' ') && /(Айгуль|Галина|Жанар|Динара)/.test(name) ? 'f' : 'm';
+    const eff = r2(rr(s, effMin, effMax)); const g = 'm'; const name = chiefName(s, g); // начальники цехов — только мужчины
     const age = ri(s, 34, 56);
     return { name, g, by: parts(s.day).y - age, face: makeFace(s, g, age), eff, loyalty: ri(s, 60, 80), exp: ri(s, 3, 22), remarks: 0, reprimands: 0, boost: 0, boostUntil: -1,
       salary: Math.round(D.CHIEF_SALARY * (0.7 + 0.6 * eff) / 1000) * 1000, since: iso(s.day), lastAction: null, bonuses: 0 };
@@ -584,7 +632,7 @@
     const list = FAILS[w.type];
     const f = list[Math.floor(rnd(s) * list.length)];
     w.status = 'fail'; w.fail = f[0]; w.failName = f[1]; w.down = 0;
-    cdStat(s, w.cdng).fails++;
+    cdStat(s, w.cdng).fails++; if (w.type === 'sk' || w.type === 'ecn') s.mFails = (s.mFails || 0) + 1;
     log(s, `Скважина ${w.name}: ${f[1].toLowerCase()} — остановлена`, 'warn');
   }
   function cdStat(s, id) { if (!s.cdStats[id]) s.cdStats[id] = { fails: 0, down: 0 }; return s.cdStats[id]; }
@@ -862,7 +910,15 @@
       l.principal -= princ; l.months--;
     }
     s.loans = s.loans.filter(l => l.principal > 1 && l.months > 0);
-    for (const d of s.deposits) { const i = d.amount * d.rate / 12; transact(s, i, 'Проценты по депозитам', `Депозит №${d.id}`); }
+    for (const d of s.deposits) {
+      const i = d.amount * d.rate / 12;
+      if (d.type === 'demand') transact(s, i, 'Проценты по депозитам', `Депозит №${d.id} (до востребования)`);
+      else { d.amount += i; }
+    }
+    // плата за эмиссии: сжигание ПНГ на факеле (с 2006 г. — сверхнормативное, ставка ×6)
+    if (s.mFlare > 0) transact(s, -s.mFlare * (y >= 2006 ? 6 : 0.8) * idx(s), 'Плата за эмиссии', `Сжигание ${fmtNum(Math.round(s.mFlare / 1000))} тыс. м³ ПНГ на факеле`);
+    // проверки госорганов
+    govInspections(s);
     // договоры: штрафы за недопоставку (доверие: не более −2 в месяц)
     let shortCount = 0;
     for (const c of s.contracts.filter(c => c.status === 'active')) {
@@ -900,7 +956,10 @@
       m: key, oil: Math.round(s.mProd), liq: Math.round(s.mLiq), inj: Math.round(s.mInj), sold: Math.round(s.mSold), plan: Math.round(planM), fact: Math.round(factM),
       rev: Math.round(rev), opex: Math.round(opex), taxes: Math.round(taxes0 + cit), interest: Math.round(interest), dep: Math.round(dep), net: Math.round(net),
       cash: Math.round(s.cash), brent: r2(avgBrent), fx: r2(avgFx), p: r2(s.reservoir.pressure), rank: s.rank, cap: Math.round(cap), trust: Math.round(s.trust),
-      cats: Object.fromEntries(Object.entries(s.mAcc).map(([k, v]) => [k, Math.round(v)]))
+      cats: Object.fromEntries(Object.entries(s.mAcc).map(([k, v]) => [k, Math.round(v)])),
+      ebitda: Math.round(rev - opex - taxes0), wd: s.mWellDays, wk: s.mWorkDays, fails: s.mFails, staff: assetSummary(s).staff,
+      gas: Math.round(s.mGas), gasUsed: Math.round(s.mGasUsed), inj2: s.mInjuries, dep: Math.round(sum(s.deposits, d => d.amount)), debt: Math.round(sum(s.loans, l => l.principal)),
+      rate: baseRate(s), ready: Math.round(s.hse.readiness), hseIdx: Math.round(hseIndex(s)), score: Math.round(s.score || 0)
     });
     if (s.history.length > 400) s.history.shift();
     log(s, `Итоги ${monthName(m)} ${y}: добыча ${fmtNum(Math.round(factM))} т (${Math.round(ratio * 100)}% плана), чистая прибыль ${fmtMoney(net)}`, ratio >= 1 ? 'good' : ratio >= 0.95 ? 'info' : 'warn');
@@ -922,6 +981,7 @@
     // новые предложения покупателей
     genOffers(s);
     // сброс аккумуляторов
+    s.mGas = 0; s.mGasUsed = 0; s.mFlare = 0; s.mWellDays = 0; s.mWorkDays = 0; s.mFails = 0; s.mInjuries = 0;
     s.mAcc = {}; s.mProd = 0; s.mLiq = 0; s.mInj = 0; s.mSold = 0; s.mExportRev = 0; s.mBrentSum = 0; s.mFxSum = 0; s.mDays = 0;
     // банкротство и отставка
     if (s.cash < 0) { s.negMonths++; log(s, `Отрицательный остаток денежных средств (${s.negMonths}/3 мес.). Возьмите кредит или сократите расходы!`, 'bad'); }
@@ -976,6 +1036,115 @@
     }
   }
 
+  /* ===================== ОТ, ПБ и экология ===================== */
+  function avgFacHealth(s) { const f = s.fac.filter(x => x.type !== 'cdng'); return f.length ? sum(f, x => x.health) / f.length : 100; }
+  function hseRisk(s, cov) {
+    cov = cov || coverage(s); const H = s.hse;
+    const avgCov = sum(Object.values(cov.dept)) / Math.max(1, Object.keys(cov.dept).length);
+    const f = {
+      'Служба ОТ (укомплектованность)': 1.6 - 0.6 * cov.dept.hse,
+      'СИЗ на складе': s.stock.ppe > assetSummary(s).staff * 0.1 ? 1 : s.stock.ppe > 0 ? 1.3 : 1.8,
+      'Износ оборудования': 1 + Math.max(0, 70 - avgFacHealth(s)) / 70,
+      'Усталость (нехватка людей)': avgCov < 0.85 ? 1 + (0.85 - avgCov) * 2 : 1,
+      'Мораль': s.morale < 40 ? 1.3 : 1,
+      'Культура безопасности': 1.35 - 0.6 * H.culture / 100,
+      'Медосмотр': s.day - H.lastMed > 365 ? 1.25 : 1
+    };
+    let k = 1; for (const v of Object.values(f)) k *= v;
+    return { k, f };
+  }
+  function hseDaily(s, cov) {
+    const H = s.hse; const staff = assetSummary(s).staff; if (!staff) return;
+    const p = 0.0011 * (staff / 40) * hseRisk(s, cov).k;
+    if (rnd(s) >= p) return;
+    const field = s.people.filter(x => !(x.sickUntil > s.day) && !['aup', 'mts', 'geo'].includes(D.ROLES.find(r => r.key === x.role).dept));
+    const victim = field.length ? pick(s, field) : pick(s, s.people); if (!victim) return;
+    // тяжесть: чем выше готовность (первая помощь, эвакуация), тем легче последствия
+    const x = rnd(s) * (1.1 - 0.25 * H.readiness / 100);
+    const sev = x < 0.72 ? 'light' : x < 0.97 ? 'severe' : 'grave';
+    const sal = personSalary(s, victim).total;
+    const SEV = { light: ['Лёгкая травма', [7, 21], 0.5, 0, 0], severe: ['Тяжёлая травма', [60, 150], 6, 15e6, 3], grave: ['Тяжёлый несчастный случай', [180, 330], 24, 60e6, 8] }[sev];
+    const days = ri(s, SEV[1][0], SEV[1][1]);
+    victim.sickUntil = s.day + days; victim.mood = clamp(victim.mood - 20, 0, 100);
+    transact(s, -sal * SEV[2], 'Возмещение вреда', `${SEV[0]}: ${victim.name}`);
+    if (SEV[3]) { const fine = SEV[3] * idx(s); transact(s, -fine, 'Штрафы и неустойки', `Расследование несчастного случая (${D.AUTHORITIES.labor})`); H.fines.push({ date: iso(s.day), org: D.AUTHORITIES.labor, reasons: [SEV[0]], amount: Math.round(fine) }); }
+    s.trust = clamp(s.trust - SEV[4], 0, 100); s.morale = clamp(s.morale - (sev === 'light' ? 1 : sev === 'severe' ? 4 : 8), 0, 100);
+    if (sev === 'grave') addEffect(s, 'strike', 4, 0.75, 'Расследование: работы приостановлены');
+    H.injuries.push({ date: iso(s.day), day: s.day, sev, name: victim.name, role: victim.role, days, prevNoInj: H.daysNoInj });
+    if (H.injuries.length > 200) H.injuries.shift();
+    H.daysNoInj = 0; s.mInjuries++;
+    const role = roleName(victim.role).toLowerCase();
+    log(s, `${sev === 'light' ? 'Несчастный случай' : 'АВАРИЯ по ОТ'}: ${SEV[0].toLowerCase()} — ${victim.name} (${role}), больничный ${days} дн.${SEV[3] ? ` Штраф ${fmtMoney(SEV[3] * idx(s))}, доверие −${SEV[4]}` : ''}`, sev === 'light' ? 'warn' : 'bad');
+  }
+  function ltifr(s) {
+    const inj = s.hse.injuries.filter(i => s.day - i.day <= 365).length;
+    const hours = Math.max(1, assetSummary(s).staff * 1980);
+    return inj * 1e6 / hours;
+  }
+  function gasUtil(s) { const h = s.history.slice(-3); const g = sum(h, x => x.gas || 0); return g > 0 ? sum(h, x => x.gasUsed || 0) / g : (s.today && s.today.gas ? s.today.gas.util : 1); }
+  function hseIndex(s) { return clamp(40 * (1 - Math.min(1, s.hse.injuries.filter(i => s.day - i.day <= 365).length / Math.max(1, assetSummary(s).staff) * 100 / 8)) + 30 * gasUtil(s) + 30 * s.hse.readiness / 100 - Math.min(15, sum(s.hse.fines.filter(f => s.day - Math.round((Date.parse(f.date) - START) / DAY_MS) <= 365), f => f.amount) / (50e6 * idx(s)) * 5), 0, 100); }
+  function hseAct(s, a) {
+    const H = s.hse; const staff = assetSummary(s).staff;
+    if (a.op === 'drill') {
+      const Dr = D.DRILLS[a.kind]; if (!Dr) throw new Error('Неизвестные учения');
+      if (s.day - (H.drills[a.kind] ?? -999) < 30) throw new Error('Эти учения уже проводились в последние 30 дней');
+      pay(s, Dr.cost * idx(s), 'Охрана труда и ПБ', Dr.name);
+      H.drills[a.kind] = s.day; H.readiness = clamp(H.readiness + Dr.add * (0.6 + 0.4 * coverage(s).dept.hse), 0, 100); H.culture = clamp(H.culture + 3, 0, 100);
+      log(s, `Проведены ${Dr.name.toLowerCase()}. Готовность к ЧС: ${Math.round(H.readiness)}%`, 'good'); return H;
+    }
+    if (a.op === 'medical') {
+      if (s.day - H.lastMed < 180) throw new Error('Медосмотр уже проводился в последние полгода');
+      pay(s, staff * 12000 * idx(s), 'Охрана труда и ПБ', `Периодический медосмотр: ${staff} чел.`);
+      H.lastMed = s.day; for (const p of s.people) p.mood = clamp(p.mood + 2, 0, 100);
+      log(s, `Проведён периодический медосмотр персонала (${staff} чел.)`, 'good'); return H;
+    }
+    if (a.op === 'training') {
+      if (s.day - H.lastTraining < 90) throw new Error('Обучение по ОТ уже проводилось в последние 3 месяца');
+      pay(s, staff * 25000 * idx(s), 'Охрана труда и ПБ', `Обучение и проверка знаний по ОТ: ${staff} чел.`);
+      H.lastTraining = s.day; H.culture = clamp(H.culture + 14, 0, 100);
+      log(s, `Обучение по охране труда: культура безопасности ${Math.round(H.culture)}%`, 'good'); return H;
+    }
+    throw new Error('Неизвестное действие ОТ');
+  }
+  function govInspections(s) {
+    const H = s.hse; const y = parts(s.day).y; const cov = coverage(s);
+    const checks = {
+      eco: () => { const v = []; const util = s.mGas > 0 ? s.mGasUsed / s.mGas : 1;
+        if (y >= 2006 && util < 0.8) v.push([`сжигание ПНГ на факеле (утилизация ${Math.round(util * 100)}%)`, 6e6 + s.mFlare * 1.5]);
+        if (!s.flags.inhibOk) v.push(['нет ингибитора: риск коррозии и разливов', 4e6]);
+        if (s.log.some(l => /Порыв|разлив/i.test(l.text) && s.day - Math.round((Date.parse(l.date) - START) / DAY_MS) < 90)) v.push(['последствия разлива нефти', 8e6 * (s.day - (H.drills.spill ?? -999) < 365 ? 0.5 : 1)]);
+        return v; },
+      prom: () => { const v = []; const worn = s.fac.filter(f => f.health < 35 && f.type !== 'cdng').length;
+        if (worn) v.push([`изношенное оборудование: ${worn} ед.`, worn * 5e6]);
+        if (H.readiness < 45) v.push([`низкая готовность к ЧС (${Math.round(H.readiness)}%)`, 10e6]);
+        if (s.day - (H.drills.gas ?? -999) > 365) v.push(['не проводились учения по газоопасным работам', 6e6]);
+        if (cov.dept.hse < 0.8) v.push(['не укомплектована служба ОТ и ПБ', 5e6]);
+        return v; },
+      labor: () => { const v = []; const avgCov = sum(Object.values(cov.dept)) / Object.keys(cov.dept).length;
+        if (s.day - H.lastMed > 365) v.push(['просрочен периодический медосмотр', 12e6]);
+        if (avgCov < 0.85) v.push(['переработки сверх нормы (нехватка персонала)', 8e6]);
+        if (s.stock.ppe <= 0) v.push(['работники без СИЗ', 10e6]);
+        if (s.day - H.lastTraining > 365) v.push(['не проводилась проверка знаний по ОТ', 5e6]);
+        return v; },
+      fire: () => { const v = [];
+        if (s.day - (H.drills.fire ?? -999) > 183) v.push(['не проводились пожарные учения более 6 месяцев', 6e6]);
+        if (H.readiness < 35) v.push(['неготовность пожарной охраны объекта', 8e6]);
+        return v; }
+    };
+    for (const org of Object.keys(checks)) {
+      if (rnd(s) > 0.12) continue;
+      const v = checks[org]();
+      if (!v.length) { s.trust = clamp(s.trust + 1, 0, 100); log(s, `Проверка: ${D.AUTHORITIES[org]} — нарушений не выявлено. Доверие +1`, 'good'); continue; }
+      const repeat = H.fines.some(f => f.org === D.AUTHORITIES[org] && s.day - Math.round((Date.parse(f.date) - START) / DAY_MS) < 365);
+      const amount = Math.round(sum(v, x => x[1]) * idx(s) * (repeat ? 1.5 : 1));
+      transact(s, -amount, 'Штрафы и неустойки', `${D.AUTHORITIES[org]}: предписание`);
+      H.fines.push({ date: iso(s.day), org: D.AUTHORITIES[org], reasons: v.map(x => x[0]), amount });
+      if (H.fines.length > 200) H.fines.shift();
+      s.trust = clamp(s.trust - (repeat ? 3 : 2), 0, 100);
+      log(s, `Проверка: ${D.AUTHORITIES[org]} — штраф ${fmtMoney(amount)}${repeat ? ' (повторное нарушение ×1,5)' : ''}: ${v.map(x => x[0]).join('; ')}`, 'bad');
+    }
+  }
+
   /* ===================== компании ТОП-100 ===================== */
   function initCompanies(s) {
     const used = new Set(); s.companies = [];
@@ -983,9 +1152,35 @@
       const name = `${pick(s, D.NAME_A)} ${pick(s, D.NAME_B)}`;
       if (used.has(name) || name === s.company.name) continue; used.add(name);
       const cap = Math.pow(10, rr(s, 9.4, 11.65));
-      s.companies.push({ name, cap, g: rr(s, 0.001, 0.007), vol: rr(s, 0.02, 0.06), beta: rr(s, 0.3, 0.9), prev: 0, hist: [] });
+      s.companies.push(compAttrs(s, { name, cap, g: rr(s, 0.001, 0.007), vol: rr(s, 0.02, 0.06), beta: rr(s, 0.3, 0.9), prev: 0, hist: [] }));
     }
     rankUpdate(s);
+  }
+  function compAttrs(s, c) { c.pm = rr(s, 0.04, 0.16); c.cost = rr(s, 7, 26); c.hse = rr(s, 35, 95); return c; }
+  // 5 ключевых параметров рейтинга
+  function myParams(s) {
+    const recent = s.daily.slice(-30); const prod = recent.length ? sum(recent, d => d.oil) / recent.length : (s.today ? s.today.oil : 0);
+    const h12 = s.history.slice(-12); const profit = sum(h12, h => h.net) * (h12.length ? 12 / h12.length : 0);
+    const h3 = s.history.slice(-3); const f3 = sum(h3, h => h.fact), o3 = sum(h3, h => h.opex), fx3 = h3.length ? sum(h3, h => h.fx) / h3.length : s.market.fx;
+    const cost = f3 > 0 ? o3 / (f3 * BBL) / fx3 : 20;
+    return { prod, cap: capitalization(s), profit, cost, hse: hseIndex(s) };
+  }
+  function compParams(s, c) {
+    // добыча по той же логике оценки, что у игрока: ~60% капитализации — стоимость добычи (1,5 года выручки)
+    const prod = c.cap * 0.6 / (365 * oilPriceT(s, 3) * 1.5);
+    return { prod, cap: c.cap, profit: c.cap * c.pm, cost: c.cost, hse: c.hse };
+  }
+  const RPARAMS = [['prod', 'Добыча', 1], ['cap', 'Капитализация', 1], ['profit', 'Прибыль 12 мес.', 1], ['cost', 'Себестоимость $/барр.', -1], ['hse', 'ОТ и экология', 1]];
+  function scoreAll(s) {
+    const rows = s.companies.map(c => ({ c, p: compParams(s, c) })); const me = { me: true, p: myParams(s) }; rows.push(me);
+    const n = rows.length;
+    for (const [k, , dir] of RPARAMS) {
+      const sorted = rows.slice().sort((a, b) => dir * (b.p[k] - a.p[k]));
+      sorted.forEach((r, i) => { r.pr = r.pr || {}; r.pr[k] = i + 1; r.pct = r.pct || {}; r.pct[k] = 1 - i / (n - 1); });
+    }
+    for (const r of rows) r.score = 100 * sum(RPARAMS, ([k]) => r.pct[k]) / RPARAMS.length;
+    rows.sort((a, b) => b.score - a.score); rows.forEach((r, i) => r.rank = i + 1);
+    return { rows, me };
   }
   function capitalization(s) {
     const book = sum(s.fac, f => f.book) + sum(s.wells, w => w.book);
@@ -999,6 +1194,8 @@
     const db = s.market.brent / prevB - 1, df = s.market.fx / prevF - 1;
     for (const c of s.companies) {
       c.cap *= Math.max(0.7, 1 + c.g + c.beta * db * 0.5 + df * 0.5 + gauss(s) * c.vol * 0.6 + 0.002);
+      if (c.pm == null) compAttrs(s, c);
+      c.pm = clamp(c.pm + gauss(s) * 0.004 + db * 0.02, 0.01, 0.25); c.cost = clamp(c.cost * (1 + gauss(s) * 0.01 + 0.004), 5, 45); c.hse = clamp(c.hse + gauss(s) * 1.5, 20, 99);
     }
     // редкие слияния
     if (rnd(s) < 0.04) {
@@ -1011,22 +1208,18 @@
     rankUpdate(s);
   }
   function rankUpdate(s) {
-    const me = capitalization(s);
-    const all = s.companies.map(c => c.cap);
+    for (const c of s.companies) if (c.pm == null) compAttrs(s, c);
+    const { rows, me } = scoreAll(s);
     s.prevRank = s.rank || 100;
-    s.rank = 1 + all.filter(x => x > me).length;
-    const sorted = s.companies.slice().sort((a, b) => b.cap - a.cap);
-    sorted.forEach((c, i) => { c.prev = c.rank || i + 1; c.rank = i + 1 + (i + 1 >= s.rank ? 1 : 0); });
+    s.rank = me.rank; s.score = me.score; s.paramRanks = me.pr;
+    for (const r of rows) if (!r.me) { r.c.prev = r.c.rank || r.rank; r.c.rank = r.rank; r.c.score = r.score; }
     if (s.rank <= 50) s.goalsDone.top50 = s.goalsDone.top50 || 'pending';
     if (s.rank <= 10) s.goalsDone.top10 = s.goalsDone.top10 || 'pending';
   }
   function leaderboard(s) {
-    const me = { name: s.company.name, cap: capitalization(s), me: true, prod: s.today ? s.today.oil : 0, prev: s.prevRank };
-    const list = s.companies.map(c => ({ name: c.name, cap: c.cap, prod: c.cap / 3.2e7 * (s.market.brent / 60) * (150 / s.market.fx), prev: c.prev }));
-    list.push(me);
-    list.sort((a, b) => b.cap - a.cap);
-    list.forEach((c, i) => c.rank = i + 1);
-    return list;
+    for (const c of s.companies) if (c.pm == null) compAttrs(s, c);
+    const { rows } = scoreAll(s);
+    return rows.map(r => Object.assign({ name: r.me ? s.company.name : r.c.name, me: !!r.me, rank: r.rank, score: r.score, pr: r.pr, prev: r.me ? s.prevRank : r.c.prev }, r.p));
   }
 
   /* ===================== цели ===================== */
@@ -1081,7 +1274,7 @@
         if (d === 'fast') { transact(s, -12e6 * idx(s), 'Ремонт и ТО', 'Ликвидация порыва коллектора'); s.trust += 2; }
         else { transact(s, -3e6 * idx(s), 'Ремонт и ТО', 'Ремонт коллектора'); if (rnd(s) < 0.6) { const f = 40e6 * idx(s); transact(s, -f, 'Штрафы и неустойки', 'Экологический штраф за разлив'); s.trust -= 4; log(s, `Экологическая инспекция: штраф ${fmtMoney(f)}`, 'bad'); } }
       } },
-    { key: 'inspect', w: 2, cond: () => true,
+    { key: 'inspect', w: 0, cond: () => false,
       make: s => {
         const c = coverage(s); const avgH = sum(s.fac, f => f.health) / Math.max(1, s.fac.length);
         const score = c.dept.hse * 40 + (s.stock.ppe > 10 ? 25 : 0) + avgH * 0.35;
@@ -1165,11 +1358,13 @@
 
   /* ===================== действия игрока ===================== */
   function int(x, a, b, what = 'значение') { x = Math.round(Number(x)); if (!Number.isFinite(x) || x < a || x > b) throw new Error(`${what}: от ${a} до ${b}`); return x; }
-  function loanRate(s) {
+  function baseRate(s) {
     const y = parts(s.day).y;
     const base = y < 2003 ? 0.16 : y < 2008 ? 0.12 : y < 2011 ? 0.15 : y < 2015 ? 0.11 : y < 2017 ? 0.17 : y < 2022 ? 0.12 : 0.17;
-    return r2(base + effVal(s, 'credit', 0) + (60 - s.trust) / 1000);
+    return r2(base + effVal(s, 'credit', 0));
   }
+  function loanRate(s) { return r2(baseRate(s) + (60 - s.trust) / 1000); }
+  function depositRate(s, type) { return Math.max(0.01, r2(baseRate(s) + D.DEPOSITS[type].spread)); }
   function creditLimit(s) { return Math.max(0, Math.max(1e9 * idx(s), capitalization(s) * 0.4) * clamp(s.trust / 60, 0.2, 1.5) - sum(s.loans, l => l.principal)); }
   function act(s, type, a = {}) {
     if (s.gameOver) throw new Error('Игра окончена');
@@ -1203,7 +1398,7 @@
         if (a.dose !== undefined) s.ckppnSet.dose = clamp(Number(a.dose), 0, 2);
         if (a.wash !== undefined) s.ckppnSet.wash = !!a.wash; break;
       }
-      case 'ppd': { s.ppd.comp = int(a.comp, 0, 150, 'Компенсация, %'); break; }
+      case 'ppd': { if (a.comp !== undefined) s.ppd.comp = int(a.comp, 0, 150, 'Компенсация, %'); if (a.reserve !== undefined) s.ppd.reserve = int(a.reserve, 0, 80, 'Неснижаемый остаток, %'); break; }
       case 'tender': {
         const B = D.BUILD[a.type], S = D.SERVICES[a.type];
         if (B) {
@@ -1321,8 +1516,21 @@
         transact(s, amount, 'Кредит получен', `Кредит ${Math.round(rate * 100)}% на ${months} мес.`); break;
       }
       case 'repay': { const l = s.loans.find(x => x.id === Number(a.id)); if (!l) throw new Error('Кредит не найден'); pay(s, l.principal, 'Погашение кредита', `Досрочное погашение №${l.id}`); s.loans = s.loans.filter(x => x !== l); break; }
-      case 'deposit': { const amount = int(a.amount, 1e6, 1e13, 'Сумма'); pay(s, amount, 'Депозит открыт', 'Депозит'); s.deposits.push({ id: uid(s), amount, rate: r2(loanRate(s) - 0.06) }); break; }
-      case 'withdraw': { const d = s.deposits.find(x => x.id === Number(a.id)); if (!d) throw new Error('Депозит не найден'); transact(s, d.amount, 'Депозит закрыт', `Депозит №${d.id}`); s.deposits = s.deposits.filter(x => x !== d); break; }
+      case 'deposit': {
+        const amount = int(a.amount, 1e6, 1e13, 'Сумма'); const type = D.DEPOSITS[a.type] ? a.type : 'demand'; const T = D.DEPOSITS[type];
+        pay(s, amount, 'Депозит открыт', `${T.name}`);
+        const d = { id: uid(s), type, principal: amount, amount, rate: depositRate(s, type), start: s.day, end: T.months ? s.day + Math.round(T.months * 30.44) : null };
+        s.deposits.push(d); log(s, `Открыт депозит №${d.id}: ${T.name}, ${fmtMoney(amount)} под ${(d.rate * 100).toFixed(1)}%`, 'info'); return d;
+      }
+      case 'withdraw': {
+        const d = s.deposits.find(x => x.id === Number(a.id)); if (!d) throw new Error('Депозит не найден');
+        let interest = 0;
+        if (d.type !== 'demand') { const months = (s.day - d.start) / 30.44; interest = d.principal * depositRate(s, 'demand') * months / 12; }
+        transact(s, d.principal, 'Депозит закрыт', `Депозит №${d.id}${d.type !== 'demand' ? ' — досрочно' : ''}`);
+        if (interest > 0) transact(s, interest, 'Проценты по депозитам', `Проценты при досрочном закрытии №${d.id}`);
+        s.deposits = s.deposits.filter(x => x !== d); return { returned: d.principal + interest, lost: Math.max(0, d.amount - d.principal - interest) };
+      }
+      case 'hse': return hseAct(s, a);
       case 'resolve': {
         const ev = s.pending; if (!ev) throw new Error('Нет события');
         const opt = ev.options[int(a.i, 0, ev.options.length - 1)];
@@ -1438,7 +1646,8 @@
       reservoir: { total: 25e6, remaining: 25e6, pressure: 92, prospects: 0 },
       cdngs: [], wells: [], fac: [], staff: {}, hires: [], repairs: [], stock: {}, orders: [], projects: [], tender: null,
       contracts: [], offers: [], loans: [], deposits: [], tech: {}, rep: {},
-      people: [], auto: { buy: false, prs: true, to: false, dgu: false, util: true }, settings: { monthReport: true }, cdStats: {}, cdReports: [], report: null,
+      people: [], namesV: 3, genderV: 5, hse: { readiness: 45, culture: 50, daysNoInj: 0, lastMed: -200, lastTraining: -400, drills: {}, injuries: [], fines: [] },
+      mGas: 0, mGasUsed: 0, mFlare: 0, mWellDays: 0, mWorkDays: 0, mFails: 0, mInjuries: 0, auto: { buy: false, prs: true, to: false, dgu: false, util: true }, settings: { monthReport: true }, cdStats: {}, cdReports: [], report: null,
       ckppnSet: { temp: 55, dose: 0.9, wash: false }, ppd: { comp: 100 }, quality: { water: 0.8, salt: 190, group: 3 }, techWf: 0.06,
       pf: {}, history: [], daily: [], ledger: [], log: [], flash: [], effects: [], yearReports: [], goalsDone: {}, flags: {},
       mAcc: {}, yAcc: {}, mProd: 0, mLiq: 0, mInj: 0, mSold: 0, mExportRev: 0, mBrentSum: 0, mFxSum: 0, mDays: 0, yProd: 0,
@@ -1513,9 +1722,43 @@
     return s;
   }
   function migrate(s) {
+    s.hse = s.hse || { readiness: 45, culture: 50, daysNoInj: 0, lastMed: s.day - 200, lastTraining: s.day - 400, drills: {}, injuries: [], fines: [] };
+    for (const k of ['mGas', 'mGasUsed', 'mFlare', 'mWellDays', 'mWorkDays', 'mFails', 'mInjuries']) if (s[k] == null) s[k] = 0;
+    for (const d of s.deposits) { if (!d.type) d.type = 'demand'; if (d.principal == null) d.principal = d.amount; if (d.start == null) d.start = s.day; if (d.end === undefined) d.end = null; }
+    for (const c of s.companies || []) if (c.pm == null) compAttrs(s, c);
     s.settings = s.settings || { monthReport: true };
     s.cdStats = s.cdStats || {}; s.cdReports = s.cdReports || [];
     for (const c of s.cdngs) { if (c.chief === undefined) c.chief = makeChief(s); c.candidates = c.candidates || []; if (c.chief && !c.chief.face) { const age = ri(s, 35, 55); c.chief.g = 'm'; c.chief.by = parts(s.day).y - age; c.chief.face = makeFace(s, 'm', age); } }
+    // v4: начальники — мужчины, коллектив 95/5
+    if (s.genderV !== 4) {
+      const toMale = x => { const age = x.by ? parts(s.day).y - x.by : 40; x.g = 'm'; x.name = kazName(s, 'm'); x.face = makeFace(s, 'm', age); };
+      for (const c of s.cdngs) {
+        if (c.chief && c.chief.g === 'f') toMale(c.chief);
+        if (c.incoming && c.incoming.chief.g === 'f') toMale(c.incoming.chief);
+        for (const k of c.candidates || []) if (k.g === 'f') toMale(k);
+      }
+      s.genderV = 4;
+    }
+    // v5: женщины только в экологии, геологии, бухгалтерии (≈1%); фамилии без повторов
+    if (s.genderV !== 5) {
+      const toMale = x => { const age = x.by ? parts(s.day).y - x.by : 40; x.g = 'm'; x.name = kazName(s, 'm'); x.face = makeFace(s, 'm', age); };
+      const ppl = s.people || []; const maxF = Math.max(1, Math.round(ppl.length * 0.01));
+      for (const p of ppl) if (p.g === 'f' && !FEM_DEPTS.includes(D.ROLES.find(r => r.key === p.role).dept)) toMale(p);
+      ppl.filter(p => p.g === 'f').slice(maxF).forEach(toMale);
+      const seen = new Set(); const ents = [...ppl];
+      for (const c of s.cdngs) { if (c.chief) ents.push(c.chief); if (c.incoming) ents.push(c.incoming.chief); ents.push(...(c.candidates || [])); }
+      for (const x of ents) { if (seen.has(baseLast(x.name))) x.name = kazName(s, x.g || 'm'); seen.add(baseLast(x.name)); }
+      s.genderV = 5;
+    }
+    if (s.namesV !== 3) {
+      for (const p of s.people || []) p.name = kazName(s, p.g);
+      for (const c of s.cdngs) {
+        if (c.chief) { c.chief.g = c.chief.g || 'm'; c.chief.name = kazName(s, c.chief.g); }
+        if (c.incoming) c.incoming.chief.name = kazName(s, c.incoming.chief.g || 'm');
+        for (const k of c.candidates || []) k.name = kazName(s, k.g || 'm');
+      }
+      s.namesV = 3;
+    }
     if (!s.people) { s.people = []; for (const r of D.ROLES) for (let i = 0; i < (s.staff[r.key] ? s.staff[r.key].n : 0); i++) s.people.push(makePerson(s, r.key)); }
   }
 
@@ -1548,7 +1791,8 @@
     VERSION, SAVE_KEY, BBL, PNL, PLAN_LEVELS, MONTHS, FAILS,
     newGame, tick, advance, act, kpi, coverage, staffNeed, assetSummary, capitalization, leaderboard, energyDemand, energySupply,
     tanks, tankCap, tankVol, capOf, facs, brigades, failMaterials, canMaterials, matPrice, leadTime, loanRate, creditLimit,
-    ensurePF, forecastByCdng, yearOutlook, chiefEff, lastCdReport, migrate, personAge, pensionAge, yearsToPension, tenure, personSalary, deptSkill, daysToNextMonth, parts, iso, daysInMonth, has, serialize, deserialize, oilPriceT, effVal, cdngFree,
+    baseRate, depositRate, hseRisk, ltifr, gasUtil, hseIndex, myParams, RPARAMS, avgFacHealth,
+    baseLast, usedSurnames, ensurePF, forecastByCdng, yearOutlook, chiefEff, lastCdReport, migrate, personAge, pensionAge, yearsToPension, tenure, personSalary, deptSkill, daysToNextMonth, parts, iso, daysInMonth, has, serialize, deserialize, oilPriceT, effVal, cdngFree,
     wellTypeName, fmtMoney, fmtNum, matName, roleName, qualityOf
   };
   function wellTypeName(t) { return { sk: 'СК (ШГН)', ecn: 'ЭЦН', inj: 'нагнетательная', water: 'водозаборная' }[t]; }
