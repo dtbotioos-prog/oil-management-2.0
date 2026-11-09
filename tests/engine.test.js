@@ -435,7 +435,7 @@ test('ОТ: риск травм выше без СИЗ, при износе и �
 });
 test('ОТ: несчастные случаи происходят, пострадавший на больничном и не работает', () => {
   const s = fresh(); s.stock.ppe = 0; s.hse.culture = 0; s.hse.lastMed = -999;
-  for (let i = 0; i < 1500 && !s.hse.injuries.length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.stock.ppe = 0; E.advance(s, 1); }
+  for (let i = 0; i < 1500 && !s.hse.injuries.length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.stock.ppe = 0; s.trust = Math.max(s.trust, 50); s.negMonths = 0; E.advance(s, 1); }
   assert.ok(s.hse.injuries.length > 0, 'травма случилась');
   const inj = s.hse.injuries[0]; const p = s.people.find(x => x.name === inj.name);
   if (p && p.sickUntil > s.day) { const cov = E.coverage(s); assert.ok(cov.role[p.role] <= s.staff[p.role].n / Math.max(1, cov.need[p.role]) + 1e-9); }
@@ -472,8 +472,31 @@ test('ПНГ: баланс газа, ГТЭС ограничена газом, �
   assert.ok(Math.abs(g.prod - (g.heat + g.gtes + g.sale + g.flare)) < 1e-6, 'газ: добыча = сумма направлений');
   assert.ok(en.supply.gtes < E.capOf(s, 'gtes') * 0.9, 'ГТЭС ограничена газом, а не паспортной мощностью');
   assert.ok(Math.abs(en.used.gtes * 24 * 0.32 - g.gtes) < 1, 'расход газа ГТЭС = выработке');
-  assert.ok(en.items['Компрессор ПНГ'] > 0, 'компрессор потребляет электроэнергию');
+  assert.ok(en.items['МКС (компрессор ПНГ)'] > 0, 'компрессор потребляет электроэнергию');
   assert.ok(g.sale > 0 && s.ledger.some(l => l.cat === 'Продажа газа'), 'газ продаётся на ГПЗ');
+});
+
+test('ЦДПиТГ: УППГ, расконсервация газовых скважин, осушка ДЭГ и сдача газа', () => {
+  const s = fresh(); for (const o of s.offers.slice()) try { E.act(s, 'accept', { id: o.id }); } catch (e) { }
+  s.cash = 1e10;
+  assert.ok(s.gwells.length === 5 && s.gwells.every(w => w.status === 'idle'), 'на старте 5 законсервированных газовых скважин');
+  assert.throws(() => E.act(s, 'gwell', { id: s.gwells[0].id, op: 'open' }), /УППГ/);
+  E.act(s, 'tender', { type: 'uppg' }); E.act(s, 'award', { i: 0 });
+  runDays(s, 130);
+  assert.ok(E.facs(s, 'uppg').length === 1, 'УППГ построена');
+  for (const w of s.gwells) E.act(s, 'gwell', { id: w.id, op: 'open' });
+  s.stock.deg = 50000; s.trust = 80;
+  runDays(s, 15);
+  const g = s.today.gas;
+  assert.ok(g.nat > 0 && g.natSale > 0, 'природный газ добывается и продаётся');
+  assert.ok(Math.abs(g.nat - g.boiler - g.gtesN - g.natSale) < 1e-6, 'баланс природного газа');
+  assert.ok(s.ledger.some(l => l.note === 'Природный газ (УППГ)'), 'выручка за газ');
+  assert.ok(g.dew != null && g.dew <= g.norm, 'при норме ДЭГ точка росы в норме');
+  const s2 = JSON.parse(JSON.stringify(s)); s2.gasSet.deg = 15; s2.gasSet.reg = 140; s2.stock.deg = 0;
+  E.advance(s2, 1);
+  assert.ok(s2.today.gas.dew > s2.today.gas.norm && !s2.today.gas.ok, 'без ДЭГ точка росы выше нормы');
+  assert.ok(E.coverage(s).need.gasop >= 4, 'нужны операторы газа');
+  assert.ok(s.today.energy.items['УППГ'] > 0, 'УППГ потребляет энергию');
 });
 
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ', есть ошибки' : ''}`);

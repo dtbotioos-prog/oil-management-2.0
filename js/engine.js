@@ -141,8 +141,9 @@
       wells: s.wells.length, prodWells: prod.length, injWells: s.wells.filter(w => w.type === 'inj').length,
       cdng: s.cdngs.length, ckppnBlocks: facs(s, 'ckppn').length, upsv: facs(s, 'upsv').length,
       tanks: s.fac.filter(f => D.BUILD[f.type].tank).length, bkns: facs(s, 'bkns').length,
+      uppg: facs(s, 'uppg').length, mks: facs(s, 'gascomp').length, gwellsOn: (s.gwells || []).filter(w => w.status !== 'idle').length,
       powerUnits: facs(s, 'substation').length + facs(s, 'gtes').length + facs(s, 'dgu').length,
-      equipment: s.fac.length + Math.ceil(s.wells.length / 3), staff
+      equipment: s.fac.length + Math.ceil((s.wells.length + (s.gwells || []).filter(w => w.status !== 'idle').length) / 3), staff
     };
   }
   function staffNeed(s) { const a = assetSummary(s); const o = {}; for (const r of D.ROLES) o[r.key] = r.need(a); return o; }
@@ -176,7 +177,8 @@
       'ЦКППН': sum(facs(s, 'ckppn'), () => 120 * (0.3 + 0.7 * util.ckppn)),
       'БКНС (ППД)': sum(facs(s, 'bkns'), () => 250 * (0.1 + 0.9 * util.bkns)) * vfd,
       'Внешняя перекачка': sum(facs(s, 'pump_ext'), () => 45 * (0.2 + 0.8 * util.ship)) * vfd,
-      'Компрессор ПНГ': sum(facs(s, 'gascomp'), () => 180 * (0.25 + 0.75 * (util.gas != null ? util.gas : 0.8))),
+      'МКС (компрессор ПНГ)': sum(facs(s, 'gascomp'), () => 180 * (0.25 + 0.75 * (util.gas != null ? util.gas : 0.8))),
+      'УППГ': sum(facs(s, 'uppg'), () => 90 * (0.3 + 0.7 * Math.min(1, s.today && s.today.gas && s.today.gas.load != null ? s.today.gas.load : 0.5))),
       'Цеха и АБК': 80 + s.cdngs.length * 20 + assetSummary(s).staff * 0.4
     };
     const season = (p.m === 12 || p.m <= 2) ? 1.06 : (p.m >= 6 && p.m <= 8) ? 1.08 : 1;
@@ -190,7 +192,7 @@
     const grid = capOf(s, 'substation') * out * elec;
     // ГТЭС работает на попутном газе: мощность ограничена газом, оставшимся после подогрева печей (≈0,32 м³ на 1 кВт·ч)
     const g0 = s.today && s.today.gas;
-    const gasForGtes = g0 ? Math.max(0, g0.prod - g0.heat) : Infinity;
+    const gasForGtes = g0 ? Math.max(0, g0.prod - g0.heat) + (g0.natNet || 0) : Infinity;
     const gtes = Math.min(capOf(s, 'gtes') * elec, gasForGtes / (24 * 0.32));
     const ses = capOf(s, 'ses') * 0.25;
     const dgu = s.auto.dgu && s.stock.diesel > 50 ? capOf(s, 'dgu') : 0;
@@ -401,7 +403,7 @@
     if (s.auto.prs) autoAssignRepairs(s);
 
     /* --- износ объектов --- */
-    const WEAR = { agzu: 0.01, upsv: 0.012, ckppn: 0.012, bkns: 0.02, pump_ext: 0.015, substation: 0.006, gtes: 0.015, dgu: 0.01, ses: 0.006, cdng: 0.004 };
+    const WEAR = { agzu: 0.01, upsv: 0.012, ckppn: 0.012, bkns: 0.02, pump_ext: 0.015, substation: 0.006, gtes: 0.015, dgu: 0.01, ses: 0.006, cdng: 0.004, uppg: 0.012, gascomp: 0.014 };
     for (const f of s.fac) {
       if (f.status === 'service') {
         f.serviceDays--;
@@ -435,12 +437,24 @@
     const H = s.hse;
     const gasProd = dayOil * 85 * (1 + 0.4 * (1 - clamp(R.remaining / R.total, 0, 1)));
     const gasHeat = Math.min(gasProd, res.P * Math.max(0, s.ckppnSet.temp - 20) * 0.03);
-    const gasGtes = Math.min(gasProd - gasHeat, kwh(used.gtes || 0) * 0.32);
-    const gasSale = Math.min(gasProd - gasHeat - gasGtes, capOf(s, 'gascomp') * energyF);
-    if (gasSale > 0) transact(s, gasSale * 4 * idx(s), 'Продажа газа', 'Сдача ПНГ на газоперерабатывающий завод', 'gas');
+    // ЦДПиТГ: МКС (аварийные остановы по защите) и природный газ через УППГ
+    const mksF = facs(s, 'gascomp').filter(f => f.status === 'ok');
+    if (s.gasTrip > 0) s.gasTrip--;
+    else if (mksF.length && rnd(s) < 0.002 * (1 + (100 - sum(mksF, f => f.health) / mksF.length) / 25)) { s.gasTrip = 1; log(s, 'МКС: аварийный останов по защите — ПНГ на факел', 'warn'); }
+    const mksCap = s.gasTrip > 0 ? 0 : capOf(s, 'gascomp') * energyF * (0.7 + 0.3 * (cov.dept.gas != null ? cov.dept.gas : 1));
+    const N = natGasDay(s, cov, energyF);
+    const natNet = Math.max(0, N.flow - N.boiler);
+    const gtesNeed = kwh(used.gtes || 0) * 0.32;
+    const gasGtes = Math.min(gasProd - gasHeat, gtesNeed);
+    const gasGtesN = Math.min(natNet, Math.max(0, gtesNeed - gasGtes));
+    const gasSale = Math.min(gasProd - gasHeat - gasGtes, mksCap);
+    const natSale = natNet - gasGtesN;
+    if (gasSale > 0) transact(s, gasSale * GAS_PRICE_P * idx(s), 'Продажа газа', 'Попутный газ (МКС)', 'gas');
+    if (natSale > 0) transact(s, natSale * GAS_PRICE_N * (N.ok ? 1 : 0.7) * idx(s), 'Продажа газа', 'Природный газ (УППГ)', 'natgas');
     const gasUsed = gasHeat + gasGtes + gasSale;
-    s.mGas += gasProd; s.mGasUsed += gasUsed; s.mFlare += gasProd - gasUsed;
-    today.gas = { prod: gasProd, heat: gasHeat, gtes: gasGtes, sale: gasSale, flare: gasProd - gasUsed, util: gasProd > 0 ? gasUsed / gasProd : 1 };
+    s.mGas += gasProd; s.mGasUsed += gasUsed; s.mFlare += gasProd - gasUsed; s.mGasN += N.flow; s.mGasNS += natSale;
+    today.gas = { prod: gasProd, heat: gasHeat, gtes: gasGtes, sale: gasSale, flare: gasProd - gasUsed, util: gasProd > 0 ? gasUsed / gasProd : 1,
+      mksCap, trip: s.gasTrip > 0, nat: N.flow, natPot: N.pot, natNet, gtesN: gasGtesN, natSale, boiler: N.boiler, dew: N.dew, norm: N.norm, ok: N.ok, load: N.load, deg: N.degUse, hyd: s.gasHyd > 0 };
     // ОТ и ПБ: износ готовности и культуры безопасности, несчастные случаи
     H.readiness = clamp(H.readiness - 0.05, 0, 100); H.culture = clamp(H.culture - 0.03, 0, 100);
     H.daysNoInj++;
@@ -488,7 +502,7 @@
     s.mProd += dayOil; s.mLiq += dayLiq; s.mInj += res.inj; s.yProd += dayOil;
     s.daily.push({ d: today.date, oil: r2(dayOil), liq: r2(dayLiq), ship: r2(shipTotal), brent: s.market.brent, fx: s.market.fx,
       tOil: r2(tankVol(s, 'oil')), tTech: r2(tankVol(s, 'tech')), tWater: r2(tankVol(s, 'water')), p: r2(R.pressure), cash: Math.round(s.cash),
-      eD: Math.round(dem.total), eS: Math.round(sup.total), q: s.quality.water });
+      eD: Math.round(dem.total), eS: Math.round(sup.total), q: s.quality.water, gN: Math.round(N.flow), dew: N.dew == null ? null : r2(N.dew) });
     if (s.daily.length > 400) s.daily.shift();
 
     /* --- события, цели, закрытие месяца --- */
@@ -686,7 +700,10 @@
   function completeProject(s, pr) {
     const B = D.BUILD[pr.type];
     if (pr.kind === 'build') {
-      if (pr.type.startsWith('well_')) {
+      if (pr.type === 'well_gas') {
+        const w = makeGwell(s, pr.quality); w.book = pr.total; s.gwells.push(w);
+        log(s, `Газовая скважина ${w.name} пробурена: ${fmtNum(Math.round(w.q / 1000))} тыс. м³/сут`, 'good');
+      } else if (pr.type.startsWith('well_')) {
         const t = pr.type === 'well_sk' ? 'sk' : pr.type === 'well_ecn' ? 'ecn' : pr.type === 'well_inj' ? 'inj' : 'water';
         const w = makeWell(s, t, pr.cdng, pr.quality);
         w.book = pr.total;
@@ -963,7 +980,7 @@
       cash: Math.round(s.cash), brent: r2(avgBrent), fx: r2(avgFx), p: r2(s.reservoir.pressure), rank: s.rank, cap: Math.round(cap), trust: Math.round(s.trust),
       cats: Object.fromEntries(Object.entries(s.mAcc).map(([k, v]) => [k, Math.round(v)])),
       ebitda: Math.round(rev - opex - taxes0), wd: s.mWellDays, wk: s.mWorkDays, fails: s.mFails, staff: assetSummary(s).staff,
-      gas: Math.round(s.mGas), gasUsed: Math.round(s.mGasUsed), inj2: s.mInjuries, dep: Math.round(sum(s.deposits, d => d.amount)), debt: Math.round(sum(s.loans, l => l.principal)),
+      gas: Math.round(s.mGas), gasUsed: Math.round(s.mGasUsed), gasN: Math.round(s.mGasN || 0), gasNS: Math.round(s.mGasNS || 0), inj2: s.mInjuries, dep: Math.round(sum(s.deposits, d => d.amount)), debt: Math.round(sum(s.loans, l => l.principal)),
       rate: baseRate(s), ready: Math.round(s.hse.readiness), hseIdx: Math.round(hseIndex(s)), score: Math.round(s.score || 0)
     });
     if (s.history.length > 400) s.history.shift();
@@ -986,7 +1003,7 @@
     // новые предложения покупателей
     genOffers(s);
     // сброс аккумуляторов
-    s.mGas = 0; s.mGasUsed = 0; s.mFlare = 0; s.mWellDays = 0; s.mWorkDays = 0; s.mFails = 0; s.mInjuries = 0;
+    s.mGas = 0; s.mGasUsed = 0; s.mFlare = 0; s.mGasN = 0; s.mGasNS = 0; s.mWellDays = 0; s.mWorkDays = 0; s.mFails = 0; s.mInjuries = 0;
     s.mAcc = {}; s.mProd = 0; s.mLiq = 0; s.mInj = 0; s.mSold = 0; s.mExportRev = 0; s.mBrentSum = 0; s.mFxSum = 0; s.mDays = 0;
     // банкротство и отставка
     if (s.cash < 0) { s.negMonths++; log(s, `Отрицательный остаток денежных средств (${s.negMonths}/3 мес.). Возьмите кредит или сократите расходы!`, 'bad'); }
@@ -1403,12 +1420,25 @@
         if (a.dose !== undefined) s.ckppnSet.dose = clamp(Number(a.dose), 0, 2);
         if (a.wash !== undefined) s.ckppnSet.wash = !!a.wash; break;
       }
+      case 'gasSet': { if (a.deg !== undefined) s.gasSet.deg = int(a.deg, 15, 50, 'Расход ДЭГ, л/ч'); if (a.reg !== undefined) s.gasSet.reg = int(a.reg, 140, 175, 'Регенерация ДЭГ, °C'); break; }
+      case 'gwell': {
+        const w = s.gwells.find(x => x.id === Number(a.id)); if (!w) throw new Error('Скважина не найдена');
+        if (a.op === 'open') {
+          if (w.status !== 'idle') throw new Error('Скважина не в консервации');
+          if (!facs(s, 'uppg').length) throw new Error('Сначала постройте УППГ');
+          pay(s, 12e6 * idx(s), 'Подрядные работы', `Расконсервация газовой скважины ${w.name}`); w.status = 'prep'; w.down = 10;
+        } else if (a.op === 'repair') { if (w.status !== 'fail') throw new Error('Ремонт не нужен'); gwRepair(s, w, true); }
+        else if (a.op === 'stop') { if (w.status !== 'work') throw new Error('Скважина не в работе'); w.status = 'stop'; }
+        else if (a.op === 'start') { if (w.status !== 'stop') throw new Error('Скважина не остановлена'); w.status = 'work'; }
+        else throw new Error('Неизвестная операция');
+        break;
+      }
       case 'ppd': { if (a.comp !== undefined) s.ppd.comp = int(a.comp, 0, 150, 'Компенсация, %'); if (a.reserve !== undefined) s.ppd.reserve = int(a.reserve, 0, 80, 'Неснижаемый остаток, %'); break; }
       case 'tender': {
         const B = D.BUILD[a.type], S = D.SERVICES[a.type];
         if (B) {
           if (B.tech && !has(s, B.tech)) throw new Error('Требуется технология: ' + D.TECH.find(t => t.key === B.tech).name);
-          if (a.type.startsWith('well_') && !cdngFree(s)) throw new Error('Все ЦДНГ заполнены (40 скважин на цех). Постройте новый ЦДНГ');
+          if (a.type.startsWith('well_') && a.type !== 'well_gas' && !cdngFree(s)) throw new Error('Все ЦДНГ заполнены (40 скважин на цех). Постройте новый ЦДНГ');
           s.tender = { kind: 'build', type: a.type, purpose: a.purpose || (B.tank ? 'oil' : null), offers: contractorOffers(s, B.cat, B.cost, B.days), title: B.name };
         } else if (S) {
           if (S.tech && !has(s, S.tech)) throw new Error('Требуется технология');
@@ -1432,7 +1462,7 @@
         const adv = T.kind === 'build' ? 0.25 : 0.5;
         pay(s, o.price * adv, T.kind === 'build' || T.type === 'seismic' ? 'Капвложения' : 'Подрядные работы', `Аванс ${adv * 100}%: ${T.title} — ${o.name}`);
         const pr = { id: uid(s), kind: T.kind, type: T.type, title: T.title + (T.purpose ? ` (${D.TANK_PURPOSE[T.purpose].split(' ')[0].toLowerCase()})` : ''), contractor: o.name, cid: o.cid, total: o.price, paid: o.price * adv, daysTotal: o.days, daysLeft: o.days, quality: o.quality, delay: 0, purpose: T.purpose, target: T.target };
-        if (T.type.startsWith('well_')) pr.cdng = (a.cdng && s.cdngs.find(c => c.id === Number(a.cdng)) && s.wells.filter(w => w.cdng === Number(a.cdng)).length < 40) ? Number(a.cdng) : cdngFree(s).id;
+        if (T.type.startsWith('well_') && T.type !== 'well_gas') pr.cdng = (a.cdng && s.cdngs.find(c => c.id === Number(a.cdng)) && s.wells.filter(w => w.cdng === Number(a.cdng)).length < 40) ? Number(a.cdng) : cdngFree(s).id;
         if (['prs', 'krs', 'grp', 'opz'].includes(T.type)) { const w = s.wells.find(x => x.id === T.target); if (T.type === 'prs') { const m = failMaterials(w); if (!canMaterials(s, m)) { transact(s, pr.paid, 'Подрядные работы', 'Возврат аванса'); throw new Error('Не хватает материалов на складе для ПРС'); } takeMaterials(s, m); } w.status = 'repair'; }
         if (['anticor', 'clean'].includes(T.type)) {
           const t = s.fac.find(f => f.id === T.target);
@@ -1640,6 +1670,61 @@
     const moved = fillTanks(s, t.purpose, vol); t.status = keep; return moved;
   }
 
+  /* ===================== ЦДПиТГ: природный газ ===================== */
+  const GAS_PRICE_N = 5, GAS_PRICE_P = 4; // ₸/м³ в базовых ценах
+  const winterGas = s => { const m = parts(s.day).m; return m >= 11 || m <= 3; };
+  function dewNorm(s) { return winterGas(s) ? -20 : -10; }
+  function degConc(s) { return clamp(87 + (s.gasSet.reg - 155) * 0.45, 70, 96); }
+  function gasDew(s, load) {
+    const g = s.gasSet, u = facs(s, 'uppg').filter(f => f.status === 'ok');
+    const h = u.length ? sum(u, f => f.health) / u.length : 100;
+    const m = parts(s.day).m; const warm = m >= 5 && m <= 9 ? 3 : 0;
+    return -27 + Math.max(0, 32 - g.deg) * 1.6 + Math.max(0, 89 - degConc(s)) * 1.4 + (100 - h) * 0.08 + Math.max(0, (load || 0) - 0.95) * 40 + (s.stock.deg > 0 ? 0 : 30) + warm;
+  }
+  function gwellPot(s, w) { const G = s.gasRes; return w.q * Math.pow(clamp(G.remaining / G.total, 0, 1), 0.6) * (0.6 + 0.4 * w.health / 100); }
+  function makeGwell(s, quality = 0.9, status = 'work') {
+    return { id: uid(s), name: `Г-${s.gwNo++}`, q: Math.round(rr(s, 25, 55) * (0.85 + 0.2 * quality)) * 1000, health: Math.round(78 + 22 * quality), status, down: 0, today: 0, cum: 0, book: 0 };
+  }
+  function gwRepair(s, w, manual) {
+    const cost = 6e6 * idx(s);
+    if (!manual && s.cash < cost * 3) return false;
+    pay(s, cost, 'Подрядные работы', `Ремонт газовой скважины ${w.name}`);
+    w.status = 'repair'; w.down = 6; w.health = Math.min(100, w.health + 20); return true;
+  }
+  function initGas(s) {
+    s.gwNo = 1; s.gwells = []; s.gasRes = { total: 8e9, remaining: 8e9 }; s.gasSet = { deg: 32, reg: 160 }; s.gasHyd = 0; s.gasTrip = 0; s.mGasN = 0; s.mGasNS = 0;
+    for (let i = 0; i < 5; i++) { const w = makeGwell(s, 0.6, 'idle'); w.health = ri(s, 55, 80); w.book = 30e6; s.gwells.push(w); }
+    if (s.stock.deg == null) s.stock.deg = 300;
+  }
+  function natGasDay(s, cov, energyF) {
+    const G = s.gasRes, nU = facs(s, 'uppg').filter(f => f.status === 'ok').length, rawCap = capOf(s, 'uppg');
+    const capU = rawCap * energyF * (0.6 + 0.4 * (cov.dept.gas != null ? Math.min(1, cov.dept.gas) : 1)) * (s.gasHyd > 0 ? 0.35 : 1);
+    let pot = 0, slots = nU * 22; const list = [];
+    for (const w of s.gwells) {
+      w.today = 0;
+      if (w.status === 'prep' || w.status === 'repair') { if (--w.down <= 0) { w.status = 'work'; log(s, `Газовая скважина ${w.name} в работе`, 'good'); } continue; }
+      if (w.status !== 'work' || !nU || slots <= 0) continue;
+      slots--; const q = gwellPot(s, w); pot += q; list.push([w, q]);
+    }
+    const flow = Math.min(pot, capU), load = rawCap > 0 ? pot / rawCap : 0, k = pot > 0 ? flow / pot : 0;
+    for (const [w, q] of list) {
+      w.today = q * k; w.cum += w.today; w.q *= 0.99965; w.health = clamp(w.health - 0.012, 1, 100);
+      if (rnd(s) < 0.0004 * (1.6 - w.health / 100)) { w.status = 'fail'; w.failName = rnd(s) < 0.5 ? 'порыв шлейфа' : 'пропуск фонтанной арматуры'; log(s, `Газовая скважина ${w.name}: ${w.failName} — закрыта`, 'bad'); }
+    }
+    if (s.auto.prs) for (const w of s.gwells) if (w.status === 'fail') gwRepair(s, w, false);
+    G.remaining = Math.max(0, G.remaining - flow);
+    const dew = flow > 0 ? gasDew(s, load) : null, norm = dewNorm(s);
+    let degUse = 0, boiler = 0;
+    if (flow > 0) {
+      degUse = flow / 1000 * 0.06 * (s.gasSet.deg / 32) * (s.gasSet.reg > 166 ? 1 + (s.gasSet.reg - 166) * 0.12 : 1);
+      s.stock.deg = Math.max(0, s.stock.deg - degUse);
+      boiler = flow * 0.003 * s.gasSet.reg / 160;
+    }
+    if (s.gasHyd > 0) s.gasHyd--;
+    else if (flow > 0 && dew > norm && rnd(s) < 0.012 * (dew - norm)) { s.gasHyd = 2; log(s, `УППГ: гидратная пробка — точка росы ${Math.round(dew)}°C при норме ${norm}°C`, 'bad'); }
+    return { flow, pot, load, dew, norm, degUse, boiler, ok: dew == null || dew <= norm };
+  }
+
   /* ===================== новая игра ===================== */
   function newGame(o = {}) {
     const diff = { easy: { cash: 6e9, trust: 70 }, normal: { cash: 3e9, trust: 60 }, hard: { cash: 1.2e9, trust: 50 } }[o.difficulty || 'normal'];
@@ -1687,8 +1772,9 @@
     if (s.people.length > 6) { s.people[2].by = 2000 - 62; s.people[2].g = 'm'; s.people[5].by = 2000 - 56; s.people[5].g = s.people[5].g; }
     syncStaff(s);
     // склад
-    const st = { nkt: 80, rods: 120, gnu: 5, ecn: 0, cable: 0, skparts: 3, pparts: 3, demulg: 4000, inhib: 1200, diesel: 15000, ppe: 60 };
+    const st = { nkt: 80, rods: 120, gnu: 5, ecn: 0, cable: 0, skparts: 3, pparts: 3, demulg: 4000, inhib: 1200, diesel: 15000, ppe: 60, deg: 300 };
     for (const m of D.MATERIALS) s.stock[m.key] = st[m.key] || 0;
+    initGas(s);
     initCompanies(s);
     genOffers(s);
     s.flash = [];
@@ -1732,6 +1818,9 @@
     for (const d of s.deposits) { if (!d.type) d.type = 'demand'; if (d.principal == null) d.principal = d.amount; if (d.start == null) d.start = s.day; if (d.end === undefined) d.end = null; }
     for (const c of s.companies || []) if (c.pm == null) compAttrs(s, c);
     s.settings = s.settings || { monthReport: true };
+    if (!s.gwells) initGas(s);
+    if (s.stock.deg == null) s.stock.deg = 300;
+    if (!s.staff.gasop) { s.staff.gasop = { n: 0, pct: 100 }; if (s.people) { const p = makePerson(s, 'gasop'); p.hired = iso(Math.max(0, s.day - 400)); s.people.push(p); syncStaff(s); } }
     s.cdStats = s.cdStats || {}; s.cdReports = s.cdReports || [];
     for (const c of s.cdngs) { if (c.chief === undefined) c.chief = makeChief(s); c.candidates = c.candidates || []; if (c.chief && !c.chief.face) { const age = ri(s, 35, 55); c.chief.g = 'm'; c.chief.by = parts(s.day).y - age; c.chief.face = makeFace(s, 'm', age); } }
     // v4: начальники — мужчины, коллектив 95/5
@@ -1794,7 +1883,7 @@
 
   const API = {
     VERSION, SAVE_KEY, BBL, PNL, PLAN_LEVELS, MONTHS, FAILS,
-    newGame, tick, advance, act, kpi, coverage, staffNeed, assetSummary, capitalization, leaderboard, energyDemand, energySupply,
+    newGame, tick, advance, act, kpi, dewNorm, degConc, gwellPot, GAS_PRICE_N, GAS_PRICE_P, coverage, staffNeed, assetSummary, capitalization, leaderboard, energyDemand, energySupply,
     tanks, tankCap, tankVol, capOf, facs, brigades, failMaterials, canMaterials, matPrice, leadTime, loanRate, creditLimit,
     baseRate, depositRate, hseRisk, ltifr, gasUtil, hseIndex, myParams, RPARAMS, avgFacHealth,
     baseLast, usedSurnames, ensurePF, forecastByCdng, yearOutlook, chiefEff, lastCdReport, migrate, personAge, pensionAge, yearsToPension, tenure, personSalary, deptSkill, daysToNextMonth, parts, iso, daysInMonth, has, serialize, deserialize, oilPriceT, effVal, cdngFree,

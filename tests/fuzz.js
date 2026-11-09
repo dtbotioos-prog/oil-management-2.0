@@ -9,7 +9,7 @@ const problems = new Map();
 function bad(key, msg) { if (!problems.has(key)) problems.set(key, { n: 0, msg }); problems.get(key).n++; }
 let rs = 1; const r = () => { rs = (rs * 1103515245 + 12345) % 2147483648; return rs / 2147483648; };
 const pick = a => a[Math.floor(r() * a.length)];
-const tryA = (s, t, a) => { try { return E.act(s, t, a); } catch (e) { if (!/недостат|нет |Не хват|уже|только|занят|лимит|не найден|не требует|Выберите|Все бригады|Требуется|доступно|заполнены|Нельзя|пуст|Некуда|качество|столько|не ниже|Сначала|полгода|квалификац|Высший|раз в|ЦДНГ|Неизвест|план|от |Неверн|Покупатель|Спот|Автоналив|Некондиц|В товарных|Цех|решение|Вакансия|Должность|кандидат|Новый начальник|выходит|Для РВС|в ремонте|на обслуживании|запчаст|слесар|дни|последн|учения|медосмотр|обучение/i.test(e.message)) bad('act:' + t + ':' + e.message.slice(0, 50), e.stack.split('\n').slice(0, 3).join(' ')); return null; } };
+const tryA = (s, t, a) => { try { return E.act(s, t, a); } catch (e) { if (!/недостат|нет |Не хват|уже|только|занят|лимит|не найден|не требует|Выберите|Все бригады|Требуется|доступно|заполнены|Нельзя|пуст|Некуда|качество|столько|не ниже|Сначала|полгода|квалификац|Высший|раз в|ЦДНГ|Неизвест|план|от |Неверн|Покупатель|Спот|Автоналив|Некондиц|В товарных|Цех|решение|Вакансия|Должность|кандидат|Новый начальник|выходит|Для РВС|в ремонте|на обслуживании|запчаст|слесар|дни|последн|учения|медосмотр|обучение|Скважина не|Ремонт не нужен|УППГ/i.test(e.message)) bad('act:' + t + ':' + e.message.slice(0, 50), e.stack.split('\n').slice(0, 3).join(' ')); return null; } };
 
 function check(s, ctx) {
   const fin = (v, n) => { if (!Number.isFinite(v)) bad('nan:' + n, `${n}=${v} @${ctx}`); };
@@ -37,6 +37,9 @@ function check(s, ctx) {
   if (s.rank < 1 || s.rank > 100) bad('rank', String(s.rank));
   for (const d of s.deposits) { fin(d.amount, 'dep'); if (d.amount < d.principal - 1) bad('dep-amount', `${d.id}`); }
   fin(s.hse.readiness, 'ready'); fin(s.hse.culture, 'culture'); if (s.today && s.today.gas) { fin(s.today.gas.flare, 'flare'); if (s.today.gas.flare < -1e-6) bad('flare-neg', String(s.today.gas.flare)); }
+  if (s.today && s.today.gas) { const g = s.today.gas; fin(g.nat, 'nat'); if (g.natSale < -1e-6 || Math.abs(g.nat - g.boiler - g.gtesN - g.natSale) > 1e-3) bad('natgas-balance', `${g.nat} ${g.boiler} ${g.gtesN} ${g.natSale} @${ctx}`); if (Math.abs(g.prod - g.heat - g.gtes - g.sale - g.flare) > 1e-3) bad('png-balance', `@${ctx}`); }
+  for (const w of s.gwells) { fin(w.q, 'gq'); fin(w.health, 'gh'); fin(w.cum, 'gcum'); if (!['work', 'idle', 'prep', 'repair', 'fail', 'stop'].includes(w.status)) bad('gw-status', w.status); }
+  fin(s.gasRes.remaining, 'gasres');
   for (const p of s.people) if (p.sickUntil != null && !Number.isFinite(p.sickUntil)) bad('sick-nan', p.name);
   const y = E.parts(s.day).y, PF = s.pf[y];
   if (PF) for (const c of s.cdngs) { const m = PF.plan.reduce((a, mo) => a + (mo[c.id] || 0), 0); if (PF.annual[c.id] != null && Math.abs(m - PF.annual[c.id]) > 1 + PF.annual[c.id] * 1e-6) bad('plan-sum', `${c.name} ${m} vs ${PF.annual[c.id]} @${ctx}`); }
@@ -74,7 +77,8 @@ for (let g = 0; g < GAMES; g++) {
         else if (a === 5) tryA(s, 'buy', { key: pick(D.MATERIALS).key, qty: 1 + Math.floor(r() * 200) });
         else if (a === 6 && s.offers.length) tryA(s, 'accept', { id: pick(s.offers).id });
         else if (a === 7) tryA(s, 'ckppn', { temp: 40 + Math.floor(r() * 40), dose: r() * 2, wash: r() < 0.3 });
-        else if (a === 8) tryA(s, 'ppd', { comp: Math.floor(r() * 150), reserve: Math.floor(r() * 80) });
+        else if (a === 8 && r() < 0.5) tryA(s, 'ppd', { comp: Math.floor(r() * 150), reserve: Math.floor(r() * 80) });
+        else if (a === 8) { tryA(s, 'gasSet', { deg: 15 + Math.floor(r() * 35), reg: 140 + Math.floor(r() * 35) }); const gw = pick(s.gwells); if (gw) tryA(s, 'gwell', { id: gw.id, op: pick(['open', 'repair', 'stop', 'start']) }); }
         else if (a === 9) tryA(s, 'deposit', { amount: 1e7 });
         else if (a === 10 && s.deposits.length) tryA(s, 'withdraw', { id: pick(s.deposits).id });
         else if (a === 11 && s.people.length) tryA(s, 'person', { id: pick(s.people).id, op: pick(['grade', 'bonus', 'train', 'fire']) });
