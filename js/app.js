@@ -4,7 +4,7 @@
   const E = window.OMEngine, D = window.OMData, G = window.OMCharts, C = G.C, esc = G.esc;
   const SND = window.OMSound || { init() { }, play() { }, ambient() { }, setOn() { }, setVol() { }, setAmb() { }, settings: { on: false, vol: 0, amb: false } };
   const root = document.getElementById('app');
-  const LS = { get: k => { try { return LS.get(k); } catch (e) { return null; } }, set: (k, v) => { try { LS.set(k, v); return true; } catch (e) { return false; } }, del: k => { try { LS.del(k); } catch (e) { } } };
+  const LS = { get: k => { try { return window.localStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { window.localStorage.setItem(k, v); return true; } catch (e) { return false; } }, del: k => { try { window.localStorage.removeItem(k); } catch (e) { } } };
   let s = null;
   const ui = { tab: 'home', sub: {}, page: 0, wellFilter: 'all', wellSort: 'rate', modal: null, running: false, stop: false, sheet: false, ledgerFilter: '', logFilter: 'all', finRange: 12 };
 
@@ -943,9 +943,24 @@
   }
 
   /* ===================== НАСТРОЙКИ ===================== */
+  function savesCard() {
+    const m = meta(); const slots = [1, 2, 3].map(n => ({ n, info: m['slot' + n] }));
+    const exportOld = !m.exportedAt || Date.now() - m.exportedAt > 7 * 864e5;
+    const row = (title, info, acts) => `<div class="slot"><div><b>${title}</b>${info ? `<small>${esc(info.company)} · ${dateRu(info.date)} · ${money(info.cash)} · №${info.rank}</small><small class="muted">сохранено ${ago(info.savedAt)}</small>` : '<small class="muted">пусто</small>'}</div><div class="slot-a">${acts}</div></div>`;
+    return card('Сохранения', `
+      <div class="slots">
+        ${row('Автосохранение', m.autoInfo, `<span class="pill good">✓ ${ago(ui.lastSave || (m.autoInfo && m.autoInfo.savedAt))}</span>`)}
+        ${row('Резервная копия <small class="muted">(раз в игровой месяц)</small>', m.backupInfo, m.backupInfo ? btn('Загрузить', 'loadBackup', '', 'small') : '')}
+        ${slots.map(x => row(`Слот ${x.n}`, x.info, btn('Сохранить', 'slotSave', x.n, 'small primary') + (x.info ? btn('Загрузить', 'slotLoad', x.n, 'small') + btn('✕', 'slotDel', x.n, 'small ghost') : ''))).join('')}
+      </div>
+      <p class="hint">Игра сохраняется автоматически: после каждого действия, каждый игровой день и при сворачивании приложения. При следующем открытии она сразу продолжится. Слоты — для отдельных партий или «точки отката» перед рискованным решением.</p>
+      <div class="banner ${exportOld ? 'bad' : 'info'}">${G.icon(exportOld ? 'warn' : 'ok')}<span>Резервный файл: ${m.exportedAt ? 'последний экспорт ' + ago(m.exportedAt) : 'ещё не делали'}. Файл защищает от удаления приложения и позволяет перенести игру на другое устройство.</span></div>
+      <div class="btnrow">${btn('Экспорт в файл', 'export', '', 'primary')}${btn('Импорт из файла', 'import')}<input type="file" id="importFile" accept=".json,application/json" hidden></div>
+      <p class="hint">Размер сохранения: ${num((m.size || 0) / 1024)} КБ. На iPhone игра с иконки «Домой» и игра в Safari хранят сохранения отдельно — переносите через экспорт/импорт.</p>`);
+  }
   function vSettings() {
     return `${card('Компания', `<div class="kv3"><div><span>Название</span><b>${esc(s.company.name)}</b></div><div><span>Месторождение</span><b>${esc(s.company.field)}</b></div><div><span>Сложность</span><b>${{ easy: 'Лёгкая', normal: 'Нормальная', hard: 'Сложная' }[s.company.difficulty]}</b></div></div><div class="btnrow">${btn('Изменить названия', 'renameForm')}</div>`)}
-      ${card('Сохранения', `<p class="hint">Игра сохраняется автоматически после каждого действия и прокрутки времени (в памяти браузера). Экспортируйте файл, чтобы перенести игру на другое устройство.</p><div class="btnrow">${btn('Сохранить сейчас', 'save', '', 'primary')}${btn('Экспорт в файл', 'export')}${btn('Импорт из файла', 'import')}<input type="file" id="importFile" accept=".json,application/json" hidden></div>`)}
+      ${savesCard()}
       ${card('Звук и анимации', `<label class="check"><input type="checkbox" data-change="sndOn" ${SND.settings.on ? 'checked' : ''}> Звуковые эффекты</label>
         <div class="slider"><label>Громкость: <b id="volv">${Math.round(SND.settings.vol * 100)}%</b></label><input type="range" min="0" max="100" step="5" value="${Math.round(SND.settings.vol * 100)}" data-input="vol" data-change="vol"></div>
         <label class="check"><input type="checkbox" data-change="sndAmb" ${SND.settings.amb ? 'checked' : ''}> Фоновый шум промысла (гул насосов, скрип станков-качалок)</label>
@@ -959,7 +974,7 @@
 
   /* ===================== СТАРТОВЫЙ ЭКРАН ===================== */
   function startScreen() {
-    const has = !!LS.get(E.SAVE_KEY);
+    const has = !!(LS.get(E.SAVE_KEY) || LS.get(BACKUP_KEY));
     return `<div class="start"><div class="start-card">
       <img src="assets/logo.png" alt="Oil Management">
       <h1>OIL MANAGEMENT 2.0</h1><p class="sub">Экономический симулятор нефтедобывающей компании · 2000 — …</p>
@@ -1007,7 +1022,48 @@
   }
 
   /* ===================== действия ===================== */
-  function save() { if (!LS.set(E.SAVE_KEY, E.serialize(s)) && !ui.saveWarned) { ui.saveWarned = true; flash('Браузер не даёт сохранять игру в памяти — используйте экспорт в файл', 'warn'); } }
+  /* ---------- сохранения: автосохранение + резервная копия + 3 слота ---------- */
+  const BACKUP_KEY = E.SAVE_KEY + '_backup', SLOT_KEY = n => E.SAVE_KEY + '_slot' + n, META_KEY = 'om2_save_meta', UI_KEY = 'om2_ui';
+  const meta = () => { try { return JSON.parse(LS.get(META_KEY) || '{}'); } catch (e) { return {}; } };
+  const setMeta = m => LS.set(META_KEY, JSON.stringify(m));
+  function slotInfo(st) { return { company: st.company.name, field: st.company.field, date: E.iso(st.day), cash: Math.round(st.cash), rank: st.rank, savedAt: Date.now() }; }
+  function save(force) {
+    if (!s) return false;
+    const txt = E.serialize(s);
+    const m = meta(); const monthKey = E.iso(s.day).slice(0, 7);
+    // резервная копия — раз в игровой месяц (предыдущая версия автосохранения)
+    if (m.backupMonth !== monthKey) { const prev = LS.get(E.SAVE_KEY); if (prev) { LS.set(BACKUP_KEY, prev); m.backupMonth = monthKey; m.backupInfo = m.autoInfo; } }
+    const ok = LS.set(E.SAVE_KEY, txt);
+    if (ok) { m.autoInfo = slotInfo(s); m.size = txt.length; setMeta(m); ui.lastSave = Date.now(); }
+    else if (!ui.saveWarned) { ui.saveWarned = true; flash('Не удалось сохранить в память браузера — сделайте экспорт в файл (Настройки)', 'warn'); }
+    return ok;
+  }
+  function saveUi() { LS.set(UI_KEY, JSON.stringify({ tab: ui.tab, sub: ui.sub })); }
+  function loadFrom(key) { const raw = LS.get(key); if (!raw) return null; try { return E.deserialize(raw); } catch (e) { return null; } }
+  // загрузка при открытии: автосохранение → резервная копия
+  function autoLoad() {
+    let st = loadFrom(E.SAVE_KEY), from = 'auto';
+    if (!st) { st = loadFrom(BACKUP_KEY); from = 'backup'; }
+    if (!st) return false;
+    s = st;
+    try { const u = JSON.parse(LS.get(UI_KEY) || '{}'); if (u.tab && NAV.some(n => n[0] === u.tab)) { ui.tab = u.tab; ui.sub = u.sub || {}; } } catch (e) { }
+    if (from === 'backup') { flash('Основное сохранение повреждено — загружена резервная копия', 'warn'); save(); }
+    else flash(`С возвращением! Игра продолжена: ${dateRu(E.iso(s.day))}`, 'good');
+    return true;
+  }
+  async function exportSave() {
+    const name = `oil-management-${s.company.name.replace(/[^\wа-яё]+/gi, '_')}-${E.iso(s.day)}.json`;
+    const txt = E.serialize(s);
+    const m = meta(); m.exportedAt = Date.now(); setMeta(m);
+    try {
+      const file = new File([txt], name, { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Сохранение Oil Management' }); flash('Файл сохранения передан', 'good'); render(); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' })); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    flash('Файл сохранения скачан', 'good'); render();
+  }
+  const ago = t => { if (!t) return 'никогда'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'только что' : m < 60 ? m + ' мин назад' : m < 1440 ? Math.round(m / 60) + ' ч назад' : Math.round(m / 1440) + ' дн. назад'; };
   function flash(text, type = 'info') { if (s) s.flash.push({ text, type }); else alert(text); }
   const ACT_SND = { accept: 'cash', spot: 'cash', hire: 'pop', buy: 'spend', award: 'stamp', tech: 'good', loan: 'coin', deposit: 'coin', withdraw: 'coin', repay: 'spend', maintain: 'hiss', repair: 'hiss', planCustom: 'stamp', cancelContract: 'leave', cancelProject: 'leave', fire: 'leave', salaryAll: 'coin', tankPurpose: 'hiss', demolish: 'build' };
   const OP_SND = { bonus: 'coin', remark: 'warn', reprimand: 'fail', fire: 'leave', hire: 'pop', grade: 'good', train: 'good', search: 'click' };
@@ -1029,7 +1085,7 @@
     const finish = () => { ui.running = false; save(); render(); floatDelta(s.cash - cash0); };
     const step = () => {
       if (ui.stop || s.pending || s.gameOver || left <= 0) { finish(); return; }
-      E.advance(s, 1); left--; SND.play('day');
+      E.advance(s, 1); left--; SND.play('day'); save();
       if (left > 0 && !s.pending && !s.gameOver && !ui.stop) { render(); setTimeout(step, delay); }
       else finish();
     };
@@ -1099,13 +1155,18 @@
       if (fromEvent) ui.modal.onClose = () => { };
     },
     save: () => { save(); flash('Игра сохранена', 'good'); render(); },
-    export: () => { const blob = new Blob([E.serialize(s)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `oil-management-${E.iso(s.day)}.json`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); },
+    slotSave: n => { const m = meta(); const doIt = () => { if (LS.set(SLOT_KEY(n), E.serialize(s))) { m['slot' + n] = slotInfo(s); setMeta(m); flash(`Сохранено в слот ${n}`, 'good'); SND.play('stamp'); } else flash('Не хватает памяти для слота', 'bad'); render(); };
+      if (m['slot' + n]) confirmBox(`Перезаписать слот ${n}?`, `Там: ${esc(m['slot' + n].company)}, ${dateRu(m['slot' + n].date)}.`, () => { doIt(); }, 'Перезаписать'); else doIt(); },
+    slotLoad: n => confirmBox(`Загрузить слот ${n}?`, 'Текущая игра будет заменена (её автосохранение перезапишется). Если она нужна — сначала сохраните её в другой слот.', () => { const st = loadFrom(SLOT_KEY(n)); if (!st) { flash('Слот повреждён или пуст', 'bad'); return; } s = st; save(); ui.tab = 'home'; flash(`Загружен слот ${n}: ${dateRu(E.iso(s.day))}`, 'good'); }, 'Загрузить'),
+    slotDel: n => confirmBox(`Очистить слот ${n}?`, 'Сохранение в слоте будет удалено.', () => { LS.del(SLOT_KEY(n)); const m = meta(); delete m['slot' + n]; setMeta(m); }, 'Удалить'),
+    loadBackup: () => confirmBox('Загрузить резервную копию?', 'Это состояние игры на начало прошлого игрового месяца. Текущая игра будет заменена.', () => { const st = loadFrom(BACKUP_KEY); if (!st) { flash('Резервная копия повреждена', 'bad'); return; } s = st; save(); ui.tab = 'home'; flash('Резервная копия загружена', 'good'); }, 'Загрузить'),
+    export: () => { exportSave(); },
     import: () => document.getElementById('importFile')?.click(),
-    newGame: () => { if (s && !s.gameOver) { confirmBox('Начать новую игру?', 'Текущий прогресс будет удалён из браузера.', () => { LS.del(E.SAVE_KEY); s = null; ui.modal = null; }); } else { LS.del(E.SAVE_KEY); s = null; ui.modal = null; render(); } },
-    continue: () => { try { s = E.deserialize(LS.get(E.SAVE_KEY)); ui.tab = 'home'; render(); } catch (e) { alert(e.message); } },
+    newGame: () => { if (s && !s.gameOver) { confirmBox('Начать новую игру?', 'Текущая игра и её автосохранение будут удалены. Слоты сохранения останутся.', () => { LS.del(E.SAVE_KEY); LS.del(BACKUP_KEY); { const m = meta(); delete m.autoInfo; delete m.backupInfo; delete m.backupMonth; setMeta(m); } s = null; ui.modal = null; }); } else { LS.del(E.SAVE_KEY); LS.del(BACKUP_KEY); { const m = meta(); delete m.autoInfo; delete m.backupInfo; delete m.backupMonth; setMeta(m); } s = null; ui.modal = null; render(); } },
+    continue: () => { if (!autoLoad()) alert('Сохранение не найдено или повреждено'); render(); },
     startNew: () => {
       s = E.newGame({ name: document.getElementById('ng-name').value.trim() || 'Сарыбулак Петролеум', field: document.getElementById('ng-field').value.trim() || D.FIELD_NAMES[0], difficulty: document.getElementById('ng-diff').value, market: document.getElementById('ng-market').value });
-      ui.tab = 'home'; ui.sub = {}; save(); render();
+      ui.tab = 'home'; ui.sub = {}; { const m = meta(); m.backupMonth = E.iso(s.day).slice(0, 7); delete m.backupInfo; setMeta(m); LS.del(BACKUP_KEY); } save(); saveUi(); render();
       if (!LS.get('om2_help_seen')) { LS.set('om2_help_seen', '1'); setTimeout(() => { if (!s.pending) handlers.help(); else ui.showHelpAfter = true; }, 50); }
     },
     pf: a => { ui.pf = a; ui.page = 0; render(); },
@@ -1159,14 +1220,15 @@
     <p class="muted">Красные пункты на «Сводке» подскажут, что сейчас мешает больше всего.</p></div>`;
   function go(spec) { const [tab, sb, extra] = spec.split(':'); ui.tab = tab; if (sb) ui.sub[tab] = sb; if (extra) { ui.wellFilter = extra; ui.page = 0; } ui.sheet = false; ui.resetScroll = true; render(); const p = document.querySelector('.page'); if (p) p.scrollTop = 0; window.scrollTo(0, 0); }
 
-  document.addEventListener('visibilitychange', () => { if (document.hidden) SND.ambient(false); else if (s) afterFx(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { SND.ambient(false); if (s) { save(); saveUi(); } } else if (s) afterFx(); });
+  window.addEventListener('pagehide', () => { if (s) { save(); saveUi(); } });
   /* ===================== события DOM ===================== */
   root.addEventListener('click', e => {
     SND.init();
     const t = e.target.closest('[data-tab],[data-sub],[data-act],[data-go]'); if (!t || t.disabled) return;
     if (t.dataset.tab || t.dataset.sub || t.dataset.go) SND.play('tab');
     else if (!['adv', 'sndTest'].includes(t.dataset.act) && !ACT_SND[t.dataset.act]) SND.play('click');
-    if (t.dataset.tab) { ui.tab = t.dataset.tab; ui.sheet = false; ui.page = 0; ui.resetScroll = true; render(); const p = document.querySelector('.page'); if (p) p.scrollTop = 0; window.scrollTo(0, 0); return; }
+    if (t.dataset.tab) { ui.tab = t.dataset.tab; setTimeout(saveUi, 0); ui.sheet = false; ui.page = 0; ui.resetScroll = true; render(); const p = document.querySelector('.page'); if (p) p.scrollTop = 0; window.scrollTo(0, 0); return; }
     if (t.dataset.sub) { ui.sub[ui.tab] = t.dataset.sub; ui.page = 0; ui.resetScroll = true; render(); return; }
     if (t.dataset.go) { go(t.dataset.go); return; }
     const h = handlers[t.dataset.act]; if (h) h(t.dataset.arg);
@@ -1234,6 +1296,9 @@
   });
 
   /* ===================== запуск ===================== */
+  autoLoad();
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { }); } catch (e) { }
+  if (s) { const m = meta(); if (s.day > 365 && (!m.exportedAt || Date.now() - m.exportedAt > 14 * 864e5) && (!m.remindAt || Date.now() - m.remindAt > 3 * 864e5)) { m.remindAt = Date.now(); setMeta(m); setTimeout(() => flash('Совет: сделайте резервный файл игры — Настройки → Экспорт в файл', 'info'), 2500); } }
   render();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => { });
   window.OMApp = { get state() { return s; }, render, advance, ui };

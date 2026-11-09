@@ -1,6 +1,6 @@
 /* Офлайн-режим: сначала сеть, при отсутствии — кэш. Обновления подтягиваются сразу. */
-const CACHE = 'oil-management-2.5.1';
-const FILES = ['./', 'index.html', 'css/style.css?v=2.5.1', 'js/data.js?v=2.5.1', 'js/engine.js?v=2.5.1', 'js/charts.js?v=2.5.1', 'js/sound.js?v=2.5.1', 'js/app.js?v=2.5.1',
+const CACHE = 'oil-management-2.5.2';
+const FILES = ['./', 'index.html', 'css/style.css?v=2.5.2', 'js/data.js?v=2.5.2', 'js/engine.js?v=2.5.2', 'js/charts.js?v=2.5.2', 'js/sound.js?v=2.5.2', 'js/app.js?v=2.5.2',
   'manifest.webmanifest', 'assets/logo.png', 'assets/icon-192.png', 'assets/icon-512.png', 'assets/apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== CACHE).map(x => caches.delete(x)))).then(() => self.clients.claim())); });
