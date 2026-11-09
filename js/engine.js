@@ -176,6 +176,7 @@
       'ЦКППН': sum(facs(s, 'ckppn'), () => 120 * (0.3 + 0.7 * util.ckppn)),
       'БКНС (ППД)': sum(facs(s, 'bkns'), () => 250 * (0.1 + 0.9 * util.bkns)) * vfd,
       'Внешняя перекачка': sum(facs(s, 'pump_ext'), () => 45 * (0.2 + 0.8 * util.ship)) * vfd,
+      'Компрессор ПНГ': sum(facs(s, 'gascomp'), () => 180 * (0.25 + 0.75 * (util.gas != null ? util.gas : 0.8))),
       'Цеха и АБК': 80 + s.cdngs.length * 20 + assetSummary(s).staff * 0.4
     };
     const season = (p.m === 12 || p.m <= 2) ? 1.06 : (p.m >= 6 && p.m <= 8) ? 1.08 : 1;
@@ -187,7 +188,10 @@
     const out = effVal(s, 'gridOut', 0) ? 0 : 1;
     const elec = 0.85 + 0.15 * (cov ? cov.dept.energy : 1);
     const grid = capOf(s, 'substation') * out * elec;
-    const gtes = capOf(s, 'gtes') * elec;
+    // ГТЭС работает на попутном газе: мощность ограничена газом, оставшимся после подогрева печей (≈0,32 м³ на 1 кВт·ч)
+    const g0 = s.today && s.today.gas;
+    const gasForGtes = g0 ? Math.max(0, g0.prod - g0.heat) : Infinity;
+    const gtes = Math.min(capOf(s, 'gtes') * elec, gasForGtes / (24 * 0.32));
     const ses = capOf(s, 'ses') * 0.25;
     const dgu = s.auto.dgu && s.stock.diesel > 50 ? capOf(s, 'dgu') : 0;
     return { ses, gtes, grid, dgu, total: ses + gtes + grid + dgu };
@@ -249,7 +253,8 @@
     const sup = energySupply(s, cov);
     const rawUpsv = capOf(s, 'upsv'), rawCk = capOf(s, 'ckppn'), rawBk = capOf(s, 'bkns'), rawSh = capOf(s, 'pump_ext');
     const estShip = sum(s.contracts.filter(c => c.status === 'active'), c => c.monthly / 30);
-    const demFull = energyDemand(s, { k: 1, upsv: rawUpsv ? Math.min(1, L / rawUpsv) : 0, ckppn: rawCk ? Math.min(1, (O + W * 0.1) / rawCk) : 0,
+    const gasCapPrev = capOf(s, 'gascomp'); const gasUtilPrev = gasCapPrev && s.today && s.today.gas ? Math.min(1, s.today.gas.sale / gasCapPrev) : 0;
+    const demFull = energyDemand(s, { gas: gasUtilPrev, k: 1, upsv: rawUpsv ? Math.min(1, L / rawUpsv) : 0, ckppn: rawCk ? Math.min(1, (O + W * 0.1) / rawCk) : 0,
       bkns: rawBk ? Math.min(1, L * s.ppd.comp / 100 / rawBk) : 0, ship: rawSh ? Math.min(1, estShip / rawSh) : 0 });
     const energyF = demFull.total > 0 ? clamp(sup.total / demFull.total, 0, 1) : 1;
     // при дефиците энергии отключаются насосы; скважины ограничиваются пропорционально
@@ -418,7 +423,7 @@
     R.pressure = clamp(R.pressure + dP, 25, 115);
 
     /* --- энергия: фактическое потребление и стоимость --- */
-    const util = { k, upsv: capUpsv > 0 ? dayLiq / Math.max(1, capOf(s, 'upsv')) : 0, ckppn: loadCk, bkns: capOf(s, 'bkns') > 0 ? res.inj / capOf(s, 'bkns') : 0, ship: capOf(s, 'pump_ext') > 0 ? shipTotal / capOf(s, 'pump_ext') : 0 };
+    const util = { gas: gasUtilPrev, k, upsv: capUpsv > 0 ? dayLiq / Math.max(1, capOf(s, 'upsv')) : 0, ckppn: loadCk, bkns: capOf(s, 'bkns') > 0 ? res.inj / capOf(s, 'bkns') : 0, ship: capOf(s, 'pump_ext') > 0 ? shipTotal / capOf(s, 'pump_ext') : 0 };
     const dem = energyDemand(s, util);
     let need = Math.min(dem.total, sup.total); const used = {};
     for (const src of ['ses', 'gtes', 'grid', 'dgu']) { const u = Math.min(need, sup[src]); used[src] = u; need -= u; }

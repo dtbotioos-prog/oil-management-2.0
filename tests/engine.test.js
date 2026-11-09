@@ -463,4 +463,17 @@ test('рейтинг по 5 параметрам: у каждого места �
   for (let i = 1; i < lb.length; i++) assert.ok(lb[i - 1].score >= lb[i].score);
 });
 
+test('ПНГ: баланс газа, ГТЭС ограничена газом, компрессор потребляет энергию', () => {
+  const s = fresh(); for (const o of s.offers.slice()) try { E.act(s, 'accept', { id: o.id }); } catch (e) { }
+  s.tech.gtes = 'test'; s.cash = 1e10;
+  E.act(s, 'tender', { type: 'gascomp' }); E.act(s, 'award', { i: 0 }); E.act(s, 'tender', { type: 'gtes' }); E.act(s, 'award', { i: 0 });
+  runDays(s, 130);
+  const g = s.today.gas, en = s.today.energy;
+  assert.ok(Math.abs(g.prod - (g.heat + g.gtes + g.sale + g.flare)) < 1e-6, 'газ: добыча = сумма направлений');
+  assert.ok(en.supply.gtes < E.capOf(s, 'gtes') * 0.9, 'ГТЭС ограничена газом, а не паспортной мощностью');
+  assert.ok(Math.abs(en.used.gtes * 24 * 0.32 - g.gtes) < 1, 'расход газа ГТЭС = выработке');
+  assert.ok(en.items['Компрессор ПНГ'] > 0, 'компрессор потребляет электроэнергию');
+  assert.ok(g.sale > 0 && s.ledger.some(l => l.cat === 'Продажа газа'), 'газ продаётся на ГПЗ');
+});
+
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ', есть ошибки' : ''}`);

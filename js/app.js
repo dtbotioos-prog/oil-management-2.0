@@ -33,16 +33,16 @@
   ];
   const SUBS = {
     prod: [['cdng', 'Цеха: план / факт'], ['wells', 'Скважины'], ['res', 'Пласт и ППД']],
-    ckppn: [['scheme', 'Схема'], ['mode', 'Режим подготовки'], ['tanks', 'Резервуары'], ['equip', 'Оборудование']],
+    ckppn: [['scheme', 'Схема'], ['gas', 'Попутный газ'], ['mode', 'Режим подготовки'], ['tanks', 'Резервуары'], ['equip', 'Оборудование']],
     sales: [['contracts', 'Договоры'], ['offers', 'Предложения'], ['market', 'Рынок']],
     build: [['catalog', 'Объекты'], ['services', 'Услуги'], ['projects', 'Проекты']],
     fin: [['pnl', 'Прибыль и убытки'], ['ledger', 'Журнал операций']],
-    hse: [['main', 'Обзор'], ['gas', 'Попутный газ'], ['log', 'Журнал происшествий']],
+    hse: [['main', 'Обзор'], ['log', 'Журнал происшествий']],
     staff: [['roles', 'Штатное расписание'], ['people', 'Сотрудники']],
     events: [['log', 'События'], ['goals', 'Цели'], ['years', 'Годовые итоги']]
   };
   const BOTTOM = ['home', 'prod', 'ckppn', 'fin'];
-  const sub = () => ui.sub[ui.tab] || (SUBS[ui.tab] ? SUBS[ui.tab][0][0] : null);
+  const sub = () => { const L = SUBS[ui.tab]; if (!L) return null; const v = ui.sub[ui.tab]; return v && L.some(x => x[0] === v) ? v : L[0][0]; };
 
   /* ===================== проблемы и подсказки ===================== */
   function alerts() {
@@ -75,7 +75,7 @@
       if (s.day - H.lastMed > 365) out.push({ l: 'warn', t: 'Просрочен медосмотр персонала — риск штрафа инспекции труда', go: 'hse', tab: 'hse' });
       if (s.day - (H.drills.fire ?? -999) > 183) out.push({ l: 'warn', t: 'Пожарные учения не проводились больше 6 месяцев', go: 'hse', tab: 'hse' });
       if (H.readiness < 35) out.push({ l: 'warn', t: `Низкая готовность к ЧС: ${num(H.readiness)}% — проведите учения`, go: 'hse', tab: 'hse' });
-      const g = s.today && s.today.gas; if (y >= 2006 && g && g.prod > 0 && g.util < 0.8) out.push({ l: 'warn', t: `Факел: утилизация ПНГ ${pct(g.util)} — штрафы экологов и плата за эмиссии`, go: 'hse:gas', tab: 'hse' });
+      const g = s.today && s.today.gas; if (y >= 2006 && g && g.prod > 0 && g.util < 0.8) out.push({ l: 'warn', t: `Факел: утилизация ПНГ ${pct(g.util)} — штрафы экологов и плата за эмиссии`, go: 'ckppn:gas', tab: 'ckppn' });
       const sick = s.people.filter(p => p.sickUntil > s.day).length; if (sick) out.push({ l: 'info', t: `На больничном: ${sick} чел.`, go: 'hse:log', tab: 'hse' });
     }
     const soon = s.deposits.filter(d => d.end && d.end - s.day <= 14 && d.end > s.day); if (soon.length) out.push({ l: 'info', t: `Скоро возврат депозитов: ${soon.length}`, go: 'bank', tab: 'bank' });
@@ -245,7 +245,7 @@
       <button class="kpi lnk ${cost != null && hl ? (cost < hl.brent * 0.3 ? 'good' : 'warn') : ''}" data-go="kpi"><div class="k-l">Себестоимость</div><div class="k-v">${cost != null ? '$' + num(cost, 1) : '—'} <small>/барр</small></div><div class="k-s">Brent $${num(s.market.brent, 1)}</div></button>
       <button class="kpi lnk ${marg != null ? (marg > 0.4 ? 'good' : marg > 0.15 ? 'warn' : 'bad') : ''}" data-go="kpi"><div class="k-l">Маржа EBITDA</div><div class="k-v">${marg != null ? pct(marg, 1) : '—'}</div><div class="k-s">${hl ? money(hl.ebitda || 0) : 'после 1-го месяца'}</div></button>
       <button class="kpi lnk ${H.daysNoInj >= 180 ? 'good' : H.daysNoInj >= 30 ? '' : 'warn'}" data-go="hse"><div class="k-l">Дней без травм</div><div class="k-v">${H.daysNoInj}</div><div class="k-s">готовность к ЧС ${num(H.readiness)}%</div></button>
-      <button class="kpi lnk ${!g || g.util >= 0.8 ? 'good' : g.util >= 0.4 ? 'warn' : 'bad'}" data-go="hse:gas"><div class="k-l">Утилизация ПНГ</div><div class="k-v">${g ? pct(g.util) : '—'}</div><div class="k-s">на факел ${g ? num(g.flare) : 0} м³/сут</div></button>
+      <button class="kpi lnk ${!g || g.util >= 0.8 ? 'good' : g.util >= 0.4 ? 'warn' : 'bad'}" data-go="ckppn:gas"><div class="k-l">Утилизация ПНГ</div><div class="k-v">${g ? pct(g.util) : '—'}</div><div class="k-s">на факел ${g ? num(g.flare) : 0} м³/сут</div></button>
     </div>`;
   }
   const logRow = l => `<div class="logrow ${l.type}"><small>${dateRu(l.date)}</small><span>${esc(l.text)}</span></div>`;
@@ -473,10 +473,11 @@
   function vCkppn() {
     const sb = sub(); const t = s.today || {}; const k = E.kpi(s);
     if (sb === 'mode') return vMode();
+    if (sb === 'gas') return vGas();
     if (sb === 'tanks') return vTanks();
     if (sb === 'equip') return vEquip();
     const capCk = E.capOf(s, 'ckppn'), capUp = E.capOf(s, 'upsv');
-    return `${card('Технологическая схема подготовки нефти', `<div class="scheme-wrap big">${scheme()}</div><p class="hint">Жидкость со скважин → АГЗУ (замер) → УПСВ (предварительный сброс воды) → технологические РВС → печи подогрева → отстойники/электродегидраторы → товарные РВС → насос внешней перекачки → покупатели. Вода → водяные РВС → БКНС → нагнетательные скважины → пласт. Красная рамка — узкое место.</p>`)}
+    return `${card('Технологическая схема подготовки нефти', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap big">${scheme()}</div><p class="hint">Жидкость со скважин → АГЗУ (замер) → УПСВ (предварительный сброс воды) → технологические РВС → печи подогрева → отстойники/электродегидраторы → товарные РВС → насос внешней перекачки → покупатели. Вода → водяные РВС → БКНС → нагнетательные скважины → пласт. Красная рамка — узкое место.</p>`)}
       <div class="kpis">
         ${kpiTile('Загрузка УПСВ', pct(capUp ? t.liquid / capUp : 0), `${num(t.liquid)} / ${num(capUp)} т/сут`, lvl(capUp ? t.liquid / capUp : 0, 0.85, 0.97, true), bar(capUp ? t.liquid / capUp : 0, lvl(capUp ? t.liquid / capUp : 0, 0.85, 0.97, true)))}
         ${kpiTile('Загрузка ЦКППН', pct(capCk ? t.P / capCk : 0), `${num(t.P)} / ${num(capCk)} т/сут`, lvl(capCk ? t.P / capCk : 0, 0.85, 0.97, true), bar(capCk ? t.P / capCk : 0, lvl(capCk ? t.P / capCk : 0, 0.85, 0.97, true)))}
@@ -710,7 +711,7 @@
     if (key === 'well_inj' || key === 'well_water') return G.injHead({ running: true, w: 56, h: 40 });
     if (key.startsWith('tank')) return G.tank({ v: 60, c: 100, purpose: 'oil', w: 50, h: 46, id: 'c' + key });
     if (key === 'ckppn') return G.furnace({ w: 46, h: 46 });
-    return `<div class="cico">${G.icon({ agzu: 'prod', upsv: 'ckppn', bkns: 'drop', pump_ext: 'sales', gascomp: 'hse', cdng: 'home', substation: 'energy', dgu: 'energy', gtes: 'energy', ses: 'energy' }[key] || 'build')}</div>`;
+    return `<div class="cico">${G.icon({ agzu: 'prod', upsv: 'ckppn', bkns: 'drop', pump_ext: 'sales', gascomp: 'gas', cdng: 'home', substation: 'energy', dgu: 'energy', gtes: 'energy', ses: 'energy' }[key] || 'build')}</div>`;
   }
   function vServices() {
     return card('Подрядные услуги', `<div class="catalog">${Object.entries(D.SERVICES).map(([key, S]) => {
@@ -863,15 +864,6 @@
     const y = E.parts(s.day).y;
     if (sb === 'log') return card('Несчастные случаи', inj12.length || H.injuries.length ? `<div class="ledger">${H.injuries.slice().reverse().slice(0, 50).map(i => `<div class="lr"><div><small>${dateRu(i.date)} · ${esc(E.roleName(i.role))}</small><span>${{ light: 'Лёгкая травма', severe: 'Тяжёлая травма', grave: 'Тяжёлый несчастный случай' }[i.sev]}: ${esc(i.name)}, больничный ${i.days} дн.</span></div><b class="${i.sev === 'light' ? 'twarn' : 'tbad'}">${i.sev === 'light' ? 'лёгкая' : 'тяжёлая'}</b></div>`).join('')}</div>` : '<div class="empty">Несчастных случаев не было</div>') +
       card('Проверки и штрафы госорганов', H.fines.length ? `<div class="ledger">${H.fines.slice().reverse().slice(0, 50).map(f => `<div class="lr"><div><small>${dateRu(f.date)} · ${esc(f.org)}</small><span>${esc(f.reasons.join('; '))}</span></div><b class="tbad">−${money(f.amount)}</b></div>`).join('')}</div>` : '<div class="empty">Штрафов не было</div>');
-    if (sb === 'gas') {
-      const hh = s.history.slice(-36);
-      return `<div class="kpis"><div class="kpi">${G.gauge({ value: g.util * 100, min: 0, max: 100, bands: [{ to: 50, color: C.red }, { to: 80, color: C.yellow }, { to: 100, color: C.aqua }], text: pct(g.util), label: 'Утилизация ПНГ' })}</div>
-        ${kpiTile('Добыча ПНГ', num(g.prod) + ' м³/сут', 'газовый фактор ≈85 м³/т', '')}${kpiTile('На факел', num(g.flare) + ' м³/сут', y >= 2006 ? 'с 2006 г. — сверхнормативная плата ×6' : 'с 2006 г. плата вырастет в 6 раз', g.flare > g.prod * 0.2 ? 'bad' : 'good')}${kpiTile('Сдано на ГПЗ', num(g.sale) + ' м³/сут', `доход ${money(g.sale * 4 * idx())}/сут`, g.sale > 0 ? 'good' : '')}</div>
-        <div class="grid2">${card('Баланс попутного газа сегодня', G.donut({ items: [{ name: 'Подогрев печей ЦКППН', value: g.heat, color: C.orange }, { name: 'ГТЭС (электроэнергия)', value: g.gtes, color: C.aqua }, { name: 'Сдача на ГПЗ', value: g.sale, color: C.blue }, { name: 'Факел', value: g.flare, color: C.red }], center: num(g.prod), sub: 'м³/сут', unit: 'м³' }))}
-        ${card('Утилизация ПНГ по месяцам, %', G.line({ labels: hh.map(x => ymRu(x.m)), series: [{ name: 'Утилизация', color: C.aqua, values: hh.map(x => x.gas ? x.gasUsed / x.gas * 100 : null), area: true }, { name: 'Норматив 80%', color: C.plan, values: hh.map(() => 80), dash: true }], height: 190, unit: '%', min: 0, max: 100, empty: 'Появится после первого месяца' }))}</div>
-        ${card('Как утилизировать газ', `<p class="hint" style="margin-top:0">Попутный газ идёт на подогрев нефти в печах, на собственную ГТЭС (с 2009 г., дешёвая электроэнергия) и сдаётся на ГПЗ через компрессорную станцию. Остаток сжигается на факеле: ежемесячная плата за эмиссии, а при утилизации ниже 80% после 2006 г. — штрафы Департамента экологии.</p>
-          <div class="btnrow">${btn('Компрессорная станция ПНГ', 'tender', 'gascomp', 'primary')}${E.has(s, 'gtes') ? btn('ГТЭС 4 МВт', 'tender', 'gtes') : btn('Технология ГТЭС (2009)', 'gotech', '', '')}</div>`)}`;
-    }
     const risk = E.hseRisk(s);
     const drill = key => { const last = H.drills[key]; const ago = last == null ? null : s.day - last; const lim = key === 'fire' ? 183 : 365; return { last, ago, over: ago == null || ago > lim }; };
     return `<div class="kpis">
@@ -880,6 +872,7 @@
       <div class="kpi">${G.gauge({ value: H.readiness, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.readiness) + '%', label: 'Готовность к ЧС' })}</div>
       <div class="kpi">${G.gauge({ value: H.culture, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.culture) + '%', label: 'Культура безопасности' })}</div>
       ${kpiTile('Штрафы за 12 мес.', money(fines12.reduce((a, f) => a + f.amount, 0)), `${fines12.length} предписаний`, fines12.length ? 'bad' : 'good')}
+      <button class="kpi lnk ${!s.today || !s.today.gas || s.today.gas.util >= 0.8 ? 'good' : s.today.gas.util >= 0.4 ? 'warn' : 'bad'}" data-go="ckppn:gas"><div class="k-l">Утилизация ПНГ</div><div class="k-v">${s.today && s.today.gas ? pct(s.today.gas.util) : '—'}</div><div class="k-s">схема газа: ЦКППН → Попутный газ ›</div></button>
       ${kpiTile('Индекс ОТ и экологии', num(E.hseIndex(s)) + ' / 100', `место в ТОП-100: ${(s.paramRanks || {}).hse || '—'}`, E.hseIndex(s) >= 70 ? 'good' : E.hseIndex(s) >= 40 ? 'warn' : 'bad')}
     </div>
     <div class="grid2">${card('Факторы риска травматизма', `<div class="hbars">${Object.entries(risk.f).map(([n, v]) => `<div class="hb"><span>${esc(n)}</span><div class="hbt"><i style="width:${Math.min(100, (v - 0.4) / 1.6 * 100)}%;background:${v > 1.2 ? 'var(--bad)' : v > 1 ? 'var(--warn)' : 'var(--good)'}"></i></div><b>×${num(v, 2)}</b></div>`).join('')}</div>
@@ -893,6 +886,52 @@
     <p class="hint">Проверки госорганов проходят случайно (примерно раз в 8 месяцев каждый орган) и проверяют реальное состояние: износ, учения, медосмотры, СИЗ, переработки, сжигание газа, разливы. Повторное нарушение в течение года — штраф ×1,5. Чистая проверка — доверие совета +1.</p>`;
   }
 
+  /* ---------- схема попутного газа (анимация) ---------- */
+  function gasScheme() {
+    const t = s.today || {}; const g = t.gas || { prod: 0, heat: 0, gtes: 0, sale: 0, flare: 0, util: 1 };
+    const capC = E.capOf(s, 'gascomp'), capG = E.capOf(s, 'gtes'), hasC = E.facs(s, 'gascomp').length > 0, hasG = E.facs(s, 'gtes').length > 0;
+    const gtesKw = (t.energy && t.energy.used && t.energy.used.gtes) || 0;
+    const dur = f => Math.max(0.5, Math.min(6, 6 / (f / 3000 + 0.25))).toFixed(2);
+    const pipe = (d, flow, col) => `<path d="${d}" class="pipe"/><path d="${d}" class="flow ${flow > 1 ? 'on' : ''}" stroke="${col}" style="animation-duration:${dur(flow)}s"/>`;
+    const lbl = (x, y, txt, cls = 'pl') => `<text x="${x}" y="${y}" class="${cls}">${txt}</text>`;
+    const box = (x, y, w, h, title, val, sub, state) => `<g class="node ${state || ''}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="9"/><text x="${x + w / 2}" y="${y + 18}" class="nt">${title}</text><text x="${x + w / 2}" y="${y + 34}" class="nv">${val}</text>${sub ? `<text x="${x + w / 2}" y="${y + 48}" class="ns">${sub}</text>` : ''}</g>`;
+    const flameH = Math.min(1.6, 0.35 + g.flare / 6000);
+    const cY = '#9fb6c9', cHeat = C.orange, cGt = C.aqua, cSale = C.blue, cFl = C.red;
+    return `<svg class="scheme gas" viewBox="0 0 900 330" role="img" aria-label="Схема попутного газа">
+      ${pipe('M150 165 H260', g.prod, cY)}${lbl(205, 155, num(g.prod) + ' м³')}
+      ${pipe('M300 165 V60 H520', g.heat, cHeat)}${lbl(440, 52, num(g.heat) + ' м³')}
+      ${pipe('M300 165 V130 H520', g.gtes, cGt)}${lbl(440, 122, num(g.gtes) + ' м³')}
+      ${pipe('M300 165 V200 H520', g.sale, cSale)}${lbl(440, 192, num(g.sale) + ' м³')}
+      ${pipe('M300 165 V275 H520', g.flare, cFl)}${lbl(440, 267, num(g.flare) + ' м³')}
+      ${pipe('M680 200 H820', g.sale, cSale)}
+      ${box(20, 120, 130, 92, 'Сепараторы', 'УПСВ + ЦКППН', `нефть ${num(t.oil || 0)} т/сут`)}
+      <g class="node res"><circle cx="300" cy="165" r="22"/><text x="300" y="169" class="nt">ПНГ</text></g>
+      ${lbl(300, 205, 'газовый фактор ≈85 м³/т', 'ns')}
+      ${box(520, 30, 160, 58, 'Печи подогрева', `${num(g.heat)} м³/сут`, `${s.ckppnSet.temp}°C · экономия топлива`)}
+      ${box(520, 100, 160, 58, hasG ? 'ГТЭС' : 'ГТЭС — нет', hasG ? `${num(gtesKw)} / ${num(capG)} кВт` : 'технология 2009 г.', hasG ? 'дешёвая электроэнергия' : 'строится через тендер', hasG ? (gtesKw < capG * 0.6 && g.prod > 0 ? 'n-warn' : '') : 'off')}
+      ${box(520, 170, 160, 58, hasC ? 'Компрессор ПНГ' : 'Компрессор — нет', hasC ? `${num(g.sale)} / ${num(capC)} м³` : 'не построен', hasC ? (g.sale >= capC * 0.97 ? 'загружен на 100%' : 'есть резерв') : 'сдача газа невозможна', hasC ? (g.sale >= capC * 0.97 && g.flare > 1 ? 'n-warn' : '') : 'off')}
+      ${box(820 - 20, 172, 96, 56, 'ГПЗ', `+${money(g.sale * 4 * idx())}`, 'в сутки')}
+      <g class="flare"><rect x="590" y="262" width="20" height="56" fill="#56687a"/><rect x="584" y="314" width="32" height="8" rx="2" fill="#2b3a4a"/>
+        <g class="flame ${g.flare > 1 ? 'on' : ''}" style="transform-box:fill-box;transform-origin:50% 100%;transform:scaleY(${flameH.toFixed(2)})"><path d="M600 262 C584 246 594 226 600 210 C606 226 616 246 600 262Z" fill="${g.flare > 1 ? '#d95926' : '#3a4654'}"/><path d="M600 262 C592 252 597 240 600 230 C603 240 608 252 600 262Z" fill="${g.flare > 1 ? '#c98500' : '#2b3a4a'}"/></g></g>
+      ${lbl(660, 255, 'Факел', 'nt')}${lbl(660, 271, g.flare > 1 ? `${num(g.flare)} м³/сут` : 'не горит', 'nv')}${lbl(660, 287, g.flare > 1 ? `плата ${money(g.flare * (E.parts(s.day).y >= 2006 ? 6 : 0.8) * idx())}/сут` : 'газ утилизирован', 'ns')}
+      <g class="node"><rect x="740" y="250" width="150" height="64" rx="9"/><text x="815" y="270" class="nt">Утилизация</text><text x="815" y="292" class="nv" style="font-size:18px;font-weight:800;fill:${g.util >= 0.8 ? 'var(--good)' : g.util >= 0.4 ? 'var(--warn)' : 'var(--bad)'}">${pct(g.util)}</text><text x="815" y="307" class="ns">норматив с 2006 г. — 80%</text></g>
+    </svg>`;
+  }
+  /* ===================== ПОПУТНЫЙ ГАЗ (производственная цепочка) ===================== */
+  function vGas() {
+    const g = (s.today && s.today.gas) || { prod: 0, heat: 0, gtes: 0, sale: 0, flare: 0, util: 1 };
+    const y = E.parts(s.day).y;
+
+      const hh = s.history.slice(-36);
+      return `${card('Схема попутного газа (онлайн)', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap big">${gasScheme()}</div><p class="hint">Газ отделяется от нефти в сепараторах УПСВ и ЦКППН и распределяется по приоритету: 1) печи подогрева нефти, 2) ГТЭС (если построена) — мощность станции ограничена объёмом газа, 3) компрессорная станция — сдача на ГПЗ с доходом 4 ₸/м³ (в ценах 2000 г.), 4) остаток сжигается на факеле.</p>`)}
+      <div class="kpis"><div class="kpi">${G.gauge({ value: g.util * 100, min: 0, max: 100, bands: [{ to: 50, color: C.red }, { to: 80, color: C.yellow }, { to: 100, color: C.aqua }], text: pct(g.util), label: 'Утилизация ПНГ' })}</div>
+        ${kpiTile('Добыча ПНГ', num(g.prod) + ' м³/сут', 'газовый фактор ≈85 м³/т', '')}${kpiTile('На факел', num(g.flare) + ' м³/сут', y >= 2006 ? 'с 2006 г. — сверхнормативная плата ×6' : 'с 2006 г. плата вырастет в 6 раз', g.flare > g.prod * 0.2 ? 'bad' : 'good')}${kpiTile('Сдано на ГПЗ', num(g.sale) + ' м³/сут', `доход ${money(g.sale * 4 * idx())}/сут`, g.sale > 0 ? 'good' : '')}</div>
+        <div class="grid2">${card('Баланс попутного газа сегодня', G.donut({ items: [{ name: 'Подогрев печей ЦКППН', value: g.heat, color: C.orange }, { name: 'ГТЭС (электроэнергия)', value: g.gtes, color: C.aqua }, { name: 'Сдача на ГПЗ', value: g.sale, color: C.blue }, { name: 'Факел', value: g.flare, color: C.red }], center: num(g.prod), sub: 'м³/сут', unit: 'м³' }))}
+        ${card('Утилизация ПНГ по месяцам, %', G.line({ labels: hh.map(x => ymRu(x.m)), series: [{ name: 'Утилизация', color: C.aqua, values: hh.map(x => x.gas ? x.gasUsed / x.gas * 100 : null), area: true }, { name: 'Норматив 80%', color: C.plan, values: hh.map(() => 80), dash: true }], height: 190, unit: '%', min: 0, max: 100, empty: 'Появится после первого месяца' }))}</div>
+        ${card('Как утилизировать газ', `<p class="hint" style="margin-top:0">Попутный газ идёт на подогрев нефти в печах, на собственную ГТЭС (с 2009 г., дешёвая электроэнергия) и сдаётся на ГПЗ через компрессорную станцию. Остаток сжигается на факеле: ежемесячная плата за эмиссии, а при утилизации ниже 80% после 2006 г. — штрафы Департамента экологии.</p>
+          <div class="btnrow">${btn('Компрессорная станция ПНГ', 'tender', 'gascomp', 'primary')}${E.has(s, 'gtes') ? btn('ГТЭС 4 МВт', 'tender', 'gtes') : btn('Технология ГТЭС (2009)', 'gotech', '', '')}</div>`)}`;
+    
+  }
   /* ===================== АНАЛИТИКА ===================== */
   function vKpi() {
     const h = s.history.slice(-ui.finRange);
