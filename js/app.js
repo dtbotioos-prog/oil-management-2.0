@@ -88,6 +88,9 @@
   function render() {
     if (!s) { root.innerHTML = startScreen(); return; }
     const scroll = document.querySelector('.page')?.scrollTop;
+    const keepSel = ['.subtabs', '.scheme-wrap', '.tscroll', '.lb', '.chips.scroll', '.loglist', '.modal', '.sheet'];
+    const kept = (ui.keepFor === ui.tab + '|' + (ui.sub[ui.tab] || '')) ? keepSel.map(sel => [...document.querySelectorAll(sel)].map(e => [e.scrollLeft, e.scrollTop])) : null;
+    const subLeft = document.querySelector('.subtabs')?.scrollLeft;
     const al = alerts(); const badge = {}; for (const a of al) if (a.l !== 'info') badge[a.tab] = (badge[a.tab] || 0) + 1;
     const k = E.kpi(s);
     const brentPrev = s.daily.length > 7 ? s.daily[s.daily.length - 8].brent : s.market.brent;
@@ -103,7 +106,7 @@
               <div class="chip cashchip ${s.cash < 0 ? 'bad' : ''}"><small>Деньги</small><b id="cashv">${money(ui.prevCash ?? s.cash)}</b></div>
               <div class="chip"><small>Brent</small><b>$${num(s.market.brent, 1)} <span class="${s.market.brent >= brentPrev ? 'up' : 'dn'}">${s.market.brent >= brentPrev ? '▲' : '▼'}</span></b></div>
               <div class="chip hide-s"><small>Курс</small><b>${num(s.market.fx, 1)} ₸/$</b></div>
-              <div class="chip"><small>Рейтинг</small><b>№${s.rank}</b></div>
+              <div class="chip"><small>Место</small><b>№${s.rank}</b></div>
             </div>
           </header>
           ${subs ? `<div class="subtabs">${subs.map(([id, n]) => `<button class="${sub() === id ? 'on' : ''}" data-sub="${id}">${n}</button>`).join('')}</div>` : ''}
@@ -120,6 +123,9 @@
         <div id="tip" class="tip"></div><div id="toasts" class="toasts"></div>
       </div>`;
     if (scroll && !ui.resetScroll) { const p = document.querySelector('.page'); if (p) p.scrollTop = scroll; }
+    if (kept) keepSel.forEach((sel, i) => document.querySelectorAll(sel).forEach((e, j) => { const v = kept[i][j]; if (v) { e.scrollLeft = v[0]; e.scrollTop = v[1]; } }));
+    else { const st = document.querySelector('.subtabs'); if (st) { if (subLeft != null && ui.lastTabForSub === ui.tab) st.scrollLeft = subLeft; const on = st.querySelector('.on'); if (on && (on.offsetLeft < st.scrollLeft || on.offsetLeft + on.offsetWidth > st.scrollLeft + st.clientWidth)) st.scrollLeft = on.offsetLeft - 12; } }
+    ui.keepFor = ui.tab + '|' + (ui.sub[ui.tab] || ''); ui.lastTabForSub = ui.tab;
     ui.resetScroll = false;
     toasts();
     afterFx();
@@ -154,7 +160,7 @@
     for (let i = 0; i < 60; i++) { const p = document.createElement('i'); p.style.left = Math.random() * 100 + 'vw'; p.style.background = cols[i % cols.length]; p.style.animationDelay = (Math.random() * 0.4) + 's'; p.style.animationDuration = (1.6 + Math.random() * 1.2) + 's'; p.style.transform = `rotate(${Math.random() * 360}deg)`; box.appendChild(p); }
     document.body.appendChild(box); setTimeout(() => box.remove(), 3200);
   }
-  function shake() { const a = document.querySelector('.app'); if (!a) return; a.classList.remove('shake'); void a.offsetWidth; a.classList.add('shake'); setTimeout(() => a.classList.remove('shake'), 600); }
+  function shake() { const f = document.createElement('div'); f.className = 'alarmflash'; document.body.appendChild(f); setTimeout(() => f.remove(), 1300); }
   function sheet(badge) {
     return `<div class="sheet-bg" data-act="sheet"></div><div class="sheet"><div class="grab"></div><div class="sheet-grid">${NAV.map(([id, name, ic]) => `<button data-tab="${id}" class="${ui.tab === id ? 'on' : ''}">${G.icon(ic)}<span>${name}</span>${badge[id] ? `<em>${badge[id]}</em>` : ''}</button>`).join('')}</div></div>`;
   }
@@ -495,11 +501,11 @@
             <label class="check"><input type="checkbox" data-change="wash" ${s.ckppnSet.wash ? 'checked' : ''}> Промывка пресной водой (обессоливание, −55% солей)</label></div></div>
           <div id="qprev" class="qprev">${qBox(q)}</div>
           <div class="kv3"><div><span>Подогрев, в сутки</span><b>${money(heatCost)}</b></div><div><span>Реагент, в сутки</span><b>${money(reagCost)}</b></div><div><span>Деэмульгатор на складе</span><b class="${s.stock.demulg < 300 ? 'tbad' : ''}">${num(s.stock.demulg)} кг</b></div></div>`)}
-        ${card('Требования к товарной нефти', `<table class="tbl"><thead><tr><th>Группа</th><th>Вода, %</th><th>Соли, мг/дм³</th><th>Цена</th></tr></thead><tbody>
+        ${card('Требования к товарной нефти', `<div class="tscroll"><table class="tbl"><thead><tr><th>Группа</th><th>Вода, %</th><th>Соли, мг/дм³</th><th>Цена</th></tr></thead><tbody>
           <tr class="${k.quality.group === 1 ? 'hl' : ''}"><td>I</td><td>≤ 0,5</td><td>≤ 100</td><td>100%</td></tr>
           <tr class="${k.quality.group === 2 ? 'hl' : ''}"><td>II</td><td>≤ 0,5</td><td>≤ 300</td><td>−1,5%</td></tr>
           <tr class="${k.quality.group === 3 ? 'hl' : ''}"><td>III</td><td>≤ 1,0</td><td>≤ 900</td><td>−4%</td></tr>
-          <tr class="${k.quality.group === 4 ? 'hl' : ''}"><td>Некондиция</td><td>&gt; 1,0</td><td>&gt; 900</td><td>не принимается</td></tr></tbody></table>
+          <tr class="${k.quality.group === 4 ? 'hl' : ''}"><td>Некондиция</td><td>&gt; 1,0</td><td>&gt; 900</td><td>не принимается</td></tr></tbody></table></div>
           <p class="hint">Качество улучшается при повышении температуры и дозировки реагента, ухудшается при перегрузке ЦКППН (&gt;90%), износе оборудования и нехватке операторов. Электродегидраторы (технология) снижают остаточную воду на 40%.</p>`)}
       </div>
       ${card('Остаточная вода в товарной нефти, % (90 дней)', G.line({ labels: d.map(x => x.d.slice(5).split('-').reverse().join('.')), series: [{ name: 'Вода, %', color: C.orange, values: d.map(x => x.q) }, { name: 'Порог I–II гр.', color: C.aqua, values: d.map(() => 0.5), dash: true }, { name: 'Порог III гр.', color: C.red, values: d.map(() => 1), dash: true }], height: 180, unit: '%' }))}`;
@@ -761,7 +767,7 @@
       <div class="grid2">${card('Потребители, кВт', `<div class="hbars">${items.map(([n, v]) => `<div class="hb"><span>${esc(n)}</span><div class="hbt"><i style="width:${(v / maxI * 100).toFixed(1)}%"></i></div><b>${num(v)}</b></div>`).join('')}</div>`)}
       ${card('Источники', G.donut({ items: src.map(([n, k, c]) => ({ name: n, value: en.used[k] || 0, color: c })), center: num(en.demand), sub: 'кВт', unit: 'кВт' }) + `<div class="brig">Дизель-генераторы в работе: ${btn(s.auto.dgu ? 'вкл' : 'выкл', 'toggle', 'dgu', 'small ' + (s.auto.dgu ? 'on' : ''))} <small>Дизель: ${num(s.stock.diesel)} л</small></div>`)}</div>
       ${card('Мощность и потребление, кВт (90 дней)', G.line({ labels: d.map(x => x.d.slice(5).split('-').reverse().join('.')), series: [{ name: 'Доступная мощность', color: C.aqua, values: d.map(x => x.eS) }, { name: 'Потребление (при полной загрузке)', color: C.orange, values: d.map(x => x.eD) }], height: 180, unit: 'кВт' }))}
-      ${card('Энергообъекты', `<table class="tbl"><tbody>${pf.map(f => `<tr><td><b>${esc(f.name)}</b></td><td>${num(f.cap)} кВт</td><td style="min-width:100px">${bar(f.health / 100)}</td><td>${f.status === 'ok' ? pill('в работе', 'good') : pill('авария', 'bad')}</td><td>${btn('ТО', 'maintain', f.id, 'small')}</td></tr>`).join('')}</tbody></table>
+      ${card('Энергообъекты', `<div class="tscroll"><table class="tbl"><tbody>${pf.map(f => `<tr><td><b>${esc(f.name)}</b></td><td>${num(f.cap)} кВт</td><td style="min-width:100px">${bar(f.health / 100)}</td><td>${f.status === 'ok' ? pill('в работе', 'good') : pill('авария', 'bad')}</td><td>${btn('ТО', 'maintain', f.id, 'small')}</td></tr>`).join('')}</tbody></table></div>
         <div class="btnrow">${btn('Подстанция +2000 кВт', 'tender', 'substation')}${btn('ДГУ 500 кВт', 'tender', 'dgu')}${E.has(s, 'gtes') ? btn('ГТЭС 4 МВт', 'tender', 'gtes') : ''}${E.has(s, 'ses') ? btn('СЭС 1 МВт', 'tender', 'ses') : ''}</div>
         <p class="hint">При дефиците мощности скважины и насосы ограничиваются пропорционально. Летом потребление растёт (охлаждение), зимой — подогрев. При аварии на ЛЭП выручит собственная генерация: ДГУ (дорогое топливо) или ГТЭС на попутном газе (с 2009 г.). Частотные преобразователи снижают потребление на 15%.</p>`)}`;
   }
@@ -785,11 +791,11 @@
       ${card('Чистая прибыль по месяцам', G.bars({ labels: h.map(x => ymRu(x.m)), series: [{ name: 'Чистая прибыль', color: v => v >= 0 ? C.aqua : C.red, values: h.map(x => x.net) }], height: 210, unit: '₸', empty: 'Появится после первого месяца' }))}</div>
       <div class="grid2">${card('Остаток денежных средств', G.line({ labels: h.map(x => ymRu(x.m)), series: [{ name: 'Деньги', color: C.aqua, values: h.map(x => x.cash), area: true }], height: 190, unit: '₸', empty: 'Появится после первого месяца' }))}
       ${card(`Структура затрат${last ? ' — ' + ymRu(last.m) : ''}`, G.donut({ items: donutItems, center: last ? G.short(cats.reduce((a, x) => a + x[1], 0)) : '', sub: '₸ всего', unit: '₸' }))}</div>
-      ${card('Отчёт о прибылях и убытках — текущий месяц', `<table class="tbl pnl"><tbody>
+      ${card('Отчёт о прибылях и убытках — текущий месяц', `<div class="tscroll"><table class="tbl pnl"><tbody>
         ${E.PNL.revenue.filter(c => cur[c]).map(c => row(c, cur[c])).join('')}${row('Итого доходы', rev, 'sum')}
         ${E.PNL.opex.filter(c => cur[c]).map(c => row(c, cur[c])).join('')}${row('Операционные расходы', -opex, 'sum')}
         ${[...E.PNL.taxes, ...E.PNL.interest].filter(c => cur[c]).map(c => row(c, cur[c])).join('')}
-        ${row('Результат (без амортизации и КПН)', rev - opex - tax - intr, 'total')}</tbody></table>
+        ${row('Результат (без амортизации и КПН)', rev - opex - tax - intr, 'total')}</tbody></table></div>
         <p class="hint">Зарплата, налоги (НДПИ, рентный, на имущество, КПН 20%), обслуживание фонда и проценты начисляются в последний день месяца. Капвложения и операции с кредитами/депозитами в прибыль не входят.</p>`)}
       ${h.length ? card('Помесячная отчётность', `<div class="tscroll"><table class="tbl"><thead><tr><th>Месяц</th><th>Добыча, т</th><th>План, т</th><th>Выручка</th><th>Затраты</th><th>Налоги</th><th>Приб.</th><th>Brent</th></tr></thead><tbody>${h.slice().reverse().map(x => `<tr><td>${ymRu(x.m)}</td><td>${num(x.fact)}</td><td>${num(x.plan)}</td><td>${money(x.rev)}</td><td>${money(x.opex)}</td><td>${money(x.taxes)}</td><td class="${x.net >= 0 ? 'tgood' : 'tbad'}">${money(x.net)}</td><td>$${num(x.brent, 1)}</td></tr>`).join('')}</tbody></table></div>`) : ''}`;
   }
@@ -1221,6 +1227,8 @@
   function go(spec) { const [tab, sb, extra] = spec.split(':'); ui.tab = tab; if (sb) ui.sub[tab] = sb; if (extra) { ui.wellFilter = extra; ui.page = 0; } ui.sheet = false; ui.resetScroll = true; render(); const p = document.querySelector('.page'); if (p) p.scrollTop = 0; window.scrollTo(0, 0); }
 
   document.addEventListener('visibilitychange', () => { if (document.hidden) { SND.ambient(false); if (s) { save(); saveUi(); } } else if (s) afterFx(); });
+  document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+  document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
   window.addEventListener('pagehide', () => { if (s) { save(); saveUi(); } });
   /* ===================== события DOM ===================== */
   root.addEventListener('click', e => {

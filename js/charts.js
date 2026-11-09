@@ -13,7 +13,8 @@
     return t;
   }
   function short(n) {
-    const a = Math.abs(n);
+    const a = Math.abs(n) >= 9995 && Math.abs(n) < 1e4 ? 1e4 : Math.abs(n) >= 999500 && Math.abs(n) < 1e6 ? 1e6 : Math.abs(n) >= 999.5e6 && Math.abs(n) < 1e9 ? 1e9 : Math.abs(n) >= 999.5e9 && Math.abs(n) < 1e12 ? 1e12 : Math.abs(n);
+    if (a !== Math.abs(n)) n = Math.sign(n) * a;
     if (a >= 1e12) return (n / 1e12).toFixed(a >= 1e13 ? 0 : 1) + ' трлн';
     if (a >= 1e9) return (n / 1e9).toFixed(a >= 1e10 ? 0 : 1) + ' млрд';
     if (a >= 1e6) return (n / 1e6).toFixed(a >= 1e7 ? 0 : 1) + ' млн';
