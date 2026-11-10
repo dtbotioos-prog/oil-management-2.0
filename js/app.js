@@ -27,14 +27,16 @@
 
   /* ===================== навигация ===================== */
   const NAV = [
-    ['home', 'Сводка', 'home'], ['prod', 'Добыча', 'prod'], ['ckppn', 'Подготовка', 'ckppn'], ['gas', 'ЦДПиТГ', 'gas'], ['sales', 'Сбыт', 'sales'], ['npz', 'НПЗ', 'npz'], ['azs', 'АЗС', 'azs'], ['shares', 'Акции', 'shares'], ['staff', 'Персонал', 'staff'],
+    ['home', 'Сводка', 'home'], ['prod', 'Добыча', 'prod'], ['ckppn', 'Подготовка', 'ckppn'], ['gas', 'ЦДПиТГ', 'gas'], ['sales', 'Сбыт', 'sales'], ['npz', 'НПЗ', 'npz'], ['azs', 'АЗС', 'azs'], ['soc', 'Быт', 'dorm'], ['fleet', 'Автопарк', 'truck'], ['shares', 'Акции', 'shares'], ['staff', 'Персонал', 'staff'],
     ['build', 'Подряд и стройка', 'build'], ['stock', 'Склад', 'stock'], ['energy', 'Энергетика', 'energy'], ['hse', 'ОТ, ПБ и экология', 'hse'], ['fin', 'Финансы', 'fin'], ['bank', 'Банк', 'bank'], ['kpi', 'Аналитика', 'kpi'],
     ['rating', 'ТОП-100', 'rating'], ['tech', 'Технологии', 'tech'], ['events', 'Журнал', 'events'], ['settings', 'Настройки', 'settings']
   ];
   const SUBS = {
     prod: [['cdng', 'Цеха: план / факт'], ['wells', 'Скважины'], ['res', 'Пласт и ППД']],
     ckppn: [['scheme', 'Схема'], ['mode', 'Режим подготовки'], ['tanks', 'Резервуары'], ['equip', 'Оборудование']],
-    gas: [['scheme', 'Схема'], ['uppg', 'УППГ'], ['mks', 'МКС и ПНГ'], ['gwells', 'Скважины'], ['balance', 'Баланс']],
+    gas: [['scheme', 'Схема'], ['uppg', 'УППГ'], ['mks', 'МКС и ПНГ'], ['lpg', 'СУГ'], ['gwells', 'Скважины'], ['balance', 'Баланс']],
+    soc: [['camp', 'Посёлок'], ['food', 'Столовая'], ['dorm', 'Общежития']],
+    fleet: [['park', 'Парк'], ['cars', 'Машины'], ['to', 'ТО и запчасти']],
     npz: [['scheme', 'Схема'], ['kpi', 'Показатели'], ['mode', 'Режим'], ['units', 'Установки'], ['prod', 'Продукты']],
     azs: [['net', 'Сеть'], ['st', 'Станции'], ['fin', 'Финансы'], ['price', 'Цены']],
     shares: [['my', 'Наши акции'], ['market', 'Биржа']],
@@ -83,6 +85,8 @@
       if (g && g.nat > 0 && !g.ok) out.push({ l: 'warn', t: `Газ не по ГОСТ: точка росы ${num(g.dew, 0)}°C (норма ${g.norm}°C) — увеличьте подачу ДЭГ`, go: 'gas:uppg', tab: 'gas' });
       if (g && g.hyd) out.push({ l: 'bad', t: 'УППГ: гидратная пробка — производительность снижена', go: 'gas:uppg', tab: 'gas' });
       if (g && g.nat > 0 && g.deg > 0 && s.stock.deg < g.deg * 10) out.push({ l: 'warn', t: `ДЭГ заканчивается: ${num(s.stock.deg)} кг`, go: 'stock', tab: 'stock' });
+      { const fl = s.fleet; if (fl) { const br = fl.cars.filter(c => c.status === 'fail' || c.status === 'ban').length, ov = fl.cars.filter(c => s.day > c.to).length; const em = fl.cars.filter(c => c.status === 'ok' && (c.fl || 0) < D.VEH[c.type].fuel * 0.5).length; if (em) out.push({ l: 'warn', t: `Автопарк: ${em} машин стоят с пустым баком`, go: 'fleet:cars', tab: 'fleet' }); if (br) out.push({ l: 'warn', t: `Автопарк: ${br} машин не на линии`, go: 'fleet:cars', tab: 'fleet' }); else if (ov) out.push({ l: 'info', t: `Автопарк: просрочено ТО у ${ov} машин`, go: 'fleet:to', tab: 'fleet' }); } }
+      { const so = E.socStats(s); if (so.homeless > 0) out.push({ l: 'warn', t: `Не хватает мест в общежитии: ${so.homeless} чел. снимают жильё`, go: 'soc:dorm', tab: 'soc' }); if (so.unfed > 0) out.push({ l: 'info', t: `Столовая мала: ${so.unfed} чел. на сухом пайке`, go: 'soc:food', tab: 'soc' }); }
       const dsd = s.today && s.today.ds; if (dsd && dsd.lost > 0.5) out.push({ l: 'bad', t: `АЗС без топлива: не продано ${num(dsd.lost, 1)} т — включите докупку`, go: 'azs:price', tab: 'azs' });
       if (dsd && dsd.calc && dsd.calc.saltOut > 3) out.push({ l: 'warn', t: `ЭЛОУ: соли ${num(dsd.calc.saltOut, 1)} мг/л — коррозия колонны. Поднимите температуру и промывку`, go: 'npz:mode', tab: 'npz' });
       if (dsd && dsd.calc && dsd.calc.coke > 0) out.push({ l: 'warn', t: 'Печь П-1 перегрета — коксование змеевика', go: 'npz:mode', tab: 'npz' });
@@ -202,7 +206,7 @@
   }
   function view() {
     switch (ui.tab) {
-      case 'home': return vHome(); case 'prod': return vProd(); case 'ckppn': return vCkppn(); case 'gas': return vGasTab(); case 'npz': return vNpz(); case 'azs': return vAzs(); case 'shares': return vShares(); case 'sales': return vSales();
+      case 'home': return vHome(); case 'prod': return vProd(); case 'ckppn': return vCkppn(); case 'gas': return vGasTab(); case 'npz': return vNpz(); case 'soc': return vSoc(); case 'fleet': return vFleet(); case 'azs': return vAzs(); case 'shares': return vShares(); case 'sales': return vSales();
       case 'staff': return vStaff(); case 'build': return vBuild(); case 'stock': return vStock(); case 'energy': return vEnergy();
       case 'bank': return vBank(); case 'hse': return vHse(); case 'kpi': return vKpi();
       case 'fin': return vFin(); case 'rating': return vRating(); case 'tech': return vTech(); case 'events': return vEvents(); case 'settings': return vSettings();
@@ -223,9 +227,10 @@
     return `
       <div class="hero">
         <div><h1>${esc(s.company.name)}</h1><p>Месторождение ${esc(s.company.field)} · ${s.cdngs.length} ЦДНГ · ${s.wells.length} скважин · ${k.staff} работников</p></div>
+        <div class="odorow"><div class="odobox"><small>Добыто с начала, т</small>${G.odometer(sum(s.history, h => h.fact || 0) + (k.factMonth || 0), 8, 'cum', 1)}</div><div class="odobox"><small>Нефть за сутки, т</small>${G.odometer(t.oil || 0, 5, 'day')}</div><div class="odobox ship"><small>Отгружено сегодня, т</small>${G.odometer((t.ship || 0) * 10, 5, 'ship', 1)}${(() => { const cap = (t.cap && t.cap.ship) || 0, r = cap ? (t.ship || 0) / cap : 0; return `<div class="shipind"><div class="shipbar ${r > 0.95 ? 'bad' : r > 0.01 ? 'good' : 'warn'}"><span style="width:${(Math.min(1, r) * 100).toFixed(1)}%"></span><i style="left:25%"></i><i style="left:50%"></i><i style="left:75%"></i></div><small>${cap ? 'насосы загружены на ' + pct(r) + ' из ' + num(cap) + ' т/сут' : 'нет насосов отгрузки'}</small></div>`; })()}</div></div>
         <div class="hero-g">
-          ${G.gauge({ value: mPct * 100, min: 70, max: 120, bands: [{ to: 95, color: C.red }, { to: 100, color: C.yellow }, { to: 120, color: C.aqua }], text: pct(mPct), label: 'План месяца (на дату)' })}
-          ${G.gauge({ value: s.trust, min: 0, max: 100, bands: [{ to: 30, color: C.red }, { to: 55, color: C.yellow }, { to: 100, color: C.aqua }], text: num(s.trust), label: 'Доверие совета' })}
+          ${G.linear({ value: mPct * 100, min: 70, max: 120, marker: 100, ticks: [70, 85, 100, 120], unit: '%', bands: [{ to: 95, color: C.red }, { to: 100, color: C.yellow }, { to: 120, color: C.aqua }], text: pct(mPct), label: 'План месяца (на дату)', sub: `факт ${num(k.factMonth)} т из ${num(k.planToDateMonth)} т` })}
+          ${G.linear({ value: s.trust, min: 0, max: 100, ticks: [0, 30, 55, 100], bands: [{ to: 30, color: C.red }, { to: 55, color: C.yellow }, { to: 100, color: C.aqua }], text: num(s.trust) + ' / 100', label: 'Доверие совета', sub: s.trust < 30 ? 'риск отставки' : s.trust < 55 ? 'совет недоволен' : 'совет доволен' })}
         </div>
       </div>
       <div class="kpis">
@@ -301,7 +306,7 @@
       ${pipe('M356 246 H430', t.inj - (t.injSource || 0), C.blue)}
       ${pipe('M520 246 H600', t.inj, C.blue, `${num(t.inj)} м³`, 560, 238)}
       ${pipe('M86 280 V306 H475 V272', t.injSource, C.blue, `водозабор ${num(t.injSource)} м³/сут`, 190, 324)}
-      ${nest(G.pumpjack({ running: work > 0 && t.k > 0.01, fail: fails, w: 92, h: 64 }), 8, 40)}
+      ${nest(G.pumpjack({ running: work > 0 && (t.k > 0.01 || !s.daily.length), fail: fails, w: 92, h: 64 }), 8, 40)}
       <text x="54" y="122" class="nt">Скважины ${work}/${prodW.length}</text><text x="54" y="137" class="nv">${num(t.oil, 1)} т/сут нефти</text>
       ${node(150, 58, 64, 54, 'АГЗУ', `${Math.min(prodW.length, agzuCap)}/${agzuCap}`, agzuCap ? prodW.length / agzuCap : 1)}
       <g class="vessel"><rect x="250" y="62" width="112" height="46" rx="23"/><text x="306" y="82" class="nt">УПСВ</text><text x="306" y="97" class="nv">${num(t.liquid)} / ${num(upsvCap)}</text></g>
@@ -392,7 +397,7 @@
         <tr class="tot"><th>Итого</th>${months.map(i => i + 1 > k.m ? `<td class="muted">${plan[i] ? num(plan[i]) : '—'}</td>` : devCell(fact[i] || 0, plan[i], i + 1 === k.m)).join('')}${devCell(k.factYear, k.planYear)}</tr>
       </tbody></table></div><p class="hint">Зелёный — план выполнен, жёлтый — отставание до 5%, красный — больше.</p>`)}
       <div class="cards3">${rows.map(r => card(esc(r.c.name), `
-        <div class="row"><div>${G.pumpjack({ running: r.today > 0, w: 70, h: 48 })}</div><div class="grow">
+        <div class="row"><div>${G.pumpjack({ running: r.today > 0 || (!s.daily.length && r.status === 'work'), w: 70, h: 48 })}</div><div class="grow">
         <div class="kv"><span>Скважин</span><b>${r.pw.filter(w => w.status === 'work').length}/${r.pw.length} доб. · ${r.ws.length - r.pw.length} проч.</b></div>
         <div class="kv"><span>Добыча сегодня</span><b>${num(r.today, 1)} т/сут</b></div>
         <div class="kv"><span>План / факт года</span><b>${num(r.ap)} / ${num(r.af)} т</b></div>
@@ -422,7 +427,7 @@
     const shown = list.slice(ui.page * per, ui.page * per + per);
     const cnt = x => s.wells.filter(x).length;
     const fl = [['all', `Все ${s.wells.length}`], ['work', `В работе ${cnt(w => w.status === 'work')}`], ['fail', `Отказ ${cnt(w => w.status === 'fail')}`], ['repair', `Ремонт/стоп ${cnt(w => w.status === 'repair' || w.status === 'idle')}`], ['inj', 'ППД/водозабор'], ...s.cdngs.map(c => [String(c.id), c.name])];
-    const head = w => w.type === 'sk' ? G.pumpjack({ running: w.status === 'work' && w.today > 0, fail: w.status === 'fail', w: 64, h: 44 }) : w.type === 'ecn' ? G.ecnHead({ running: w.status === 'work' && w.today > 0, fail: w.status === 'fail', w: 64, h: 44 }) : G.injHead({ running: w.status === 'work', fail: w.status === 'fail', w: 64, h: 44 });
+    const head = w => w.type === 'sk' ? G.pumpjack({ running: w.status === 'work' && (w.today > 0 || !s.daily.length), fail: w.status === 'fail', w: 64, h: 44 }) : w.type === 'ecn' ? G.ecnHead({ running: w.status === 'work' && (w.today > 0 || !s.daily.length), fail: w.status === 'fail', w: 64, h: 44 }) : G.injHead({ running: w.status === 'work', fail: w.status === 'fail', w: 64, h: 44 });
     return `
       <div class="toolbar"><div class="chips scroll">${fl.map(([id, n]) => `<button class="fchip ${f === id ? 'on' : ''}" data-act="wf" data-arg="${id}">${n}</button>`).join('')}</div>
       <label class="sel">Сортировка <select data-change="wsort">${[['rate', 'по дебиту'], ['wc', 'по обводнённости'], ['health', 'по износу'], ['name', 'по номеру']].map(([v, n]) => `<option value="${v}" ${ui.wellSort === v ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
@@ -514,7 +519,7 @@
           <div class="mode-vis">${G.furnace({ on: true, temp: s.ckppnSet.temp, w: 96, h: 96 })}<div>
             <div class="slider"><label>Температура в печах: <b id="tv">${s.ckppnSet.temp}°C</b></label><input type="range" min="30" max="85" step="1" value="${s.ckppnSet.temp}" data-input="temp" data-change="temp"></div>
             <div class="slider"><label>Дозировка деэмульгатора: <b id="dv">${Math.round(s.ckppnSet.dose * 100)}%</b> <small>(${num(s.ckppnSet.dose * 150, 0)} г/т)</small></label><input type="range" min="0" max="200" step="5" value="${Math.round(s.ckppnSet.dose * 100)}" data-input="dose" data-change="dose"></div>
-            <label class="check"><input type="checkbox" data-change="wash" ${s.ckppnSet.wash ? 'checked' : ''}> Промывка пресной водой (обессоливание, −55% солей)</label></div></div>
+            <div class="vrow">${valveBtn(s.ckppnSet.wash, 'ckwash', '', 'ckwash', 'Пресная вода')}<small>Промывка пресной водой (обессоливание, −55% солей)</small></div></div></div>
           <div id="qprev" class="qprev">${qBox(q)}</div>
           <div class="kv3"><div><span>Подогрев, в сутки</span><b>${money(heatCost)}</b></div><div><span>Реагент, в сутки</span><b>${money(reagCost)}</b></div><div><span>Деэмульгатор на складе</span><b class="${s.stock.demulg < 300 ? 'tbad' : ''}">${num(s.stock.demulg)} кг</b></div></div>`)}
         ${card('Требования к товарной нефти', `<div class="tscroll"><table class="tbl"><thead><tr><th>Группа</th><th>Вода, %</th><th>Соли, мг/дм³</th><th>Цена</th></tr></thead><tbody>
@@ -547,6 +552,7 @@
     const list = s.fac.filter(f => !D.BUILD[f.type].tank);
     return card('Оборудование и объекты', `<div class="eqlist">
       ${list.map(f => { const B = D.BUILD[f.type]; return `<div class="eq ${f.status}"><div class="eq-t"><b>${esc(f.name)}</b>${f.status === 'ok' ? pill('в работе', 'good') : f.status === 'fail' ? pill('авария', 'bad') : pill('обслуживание', 'warn')}</div>
+        ${G.plate({ id: f.id, type: B.name, spec: B.kw ? B.kw + ' кВт' : '' })}${f.status !== 'ok' ? G.danger('НЕ ВКЛЮЧАТЬ! РАБОТАЮТ ЛЮДИ', f.status === 'fail' ? 'авария — нужен ремонт' : 'обслуживание') : ''}
         <div class="eq-m"><small>${B.cap ? 'Мощность ' + num(f.cap) + (f.type === 'agzu' || f.type === 'cdng' ? ' скв.' : ['substation', 'dgu', 'gtes', 'ses'].includes(f.type) ? ' кВт' : ' т/сут') : ''}${B.kw ? ' · ' + B.kw + ' кВт' : ''}</small><div class="w-h"><small>Износ</small>${bar(f.health / 100)}<small>${num(f.health)}%</small></div></div>
         ${f.type !== 'cdng' ? btn('ТО', 'maintain', f.id, 'small') : ''}</div>`; }).join('')}
       </div>
@@ -682,7 +688,7 @@
     const depts = Object.entries(D.DEPTS);
     return `
       <div class="kpis">
-        <div class="kpi">${G.gauge({ value: s.morale, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 60, color: C.yellow }, { to: 100, color: C.aqua }], text: num(s.morale) + '%', label: 'Мораль коллектива' })}</div>
+        <div class="kpi">${G.moodFace({ value: s.morale, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 60, color: C.yellow }, { to: 100, color: C.aqua }], text: num(s.morale) + '%', label: 'Мораль коллектива' })}</div>
         ${kpiTile('Численность', `${k.staff} чел.`, `требуется ${Object.values(need).reduce((a, b) => a + b, 0)}`, '')}
         ${kpiTile('ФОТ в месяц', money(payroll), `+ соц. налог ${money(payroll * 0.11)}`, '')}
         ${kpiTile('В подборе', `${s.hires.reduce((a, h) => a + h.n, 0)} чел.`, s.hires.length ? `ближайший выход через ${Math.min(...s.hires.map(h => h.days))} дн.` : 'нет заявок', '')}
@@ -726,7 +732,7 @@
     if (key === 'well_inj' || key === 'well_water') return G.injHead({ running: true, w: 56, h: 40 });
     if (key.startsWith('tank')) return G.tank({ v: 60, c: 100, purpose: 'oil', w: 50, h: 46, id: 'c' + key });
     if (key === 'ckppn') return G.furnace({ w: 46, h: 46 });
-    return `<div class="cico">${G.icon({ agzu: 'prod', upsv: 'ckppn', bkns: 'drop', pump_ext: 'sales', gascomp: 'gas', uppg: 'gas', well_gas: 'gas', npz: 'npz', npz_ref: 'npz', npz_rvs: 'ckppn', npz_rvs10: 'ckppn', azs: 'azs', cdng: 'home', substation: 'energy', dgu: 'energy', gtes: 'energy', ses: 'energy' }[key] || 'build')}</div>`;
+    return `<div class="cico">${G.icon({ agzu: 'prod', upsv: 'ckppn', bkns: 'drop', pump_ext: 'sales', gascomp: 'gas', uppg: 'gas', well_gas: 'gas', npz: 'npz', npz_ref: 'npz', npz_rvs: 'ckppn', npz_rvs10: 'ckppn', dorm: 'dorm', canteen: 'dorm', banya: 'dorm', club: 'dorm', azs: 'azs', cdng: 'home', substation: 'energy', dgu: 'energy', gtes: 'energy', ses: 'energy' }[key] || 'build')}</div>`;
   }
   function vServices() {
     return card('Подрядные услуги', `<div class="catalog">${Object.entries(D.SERVICES).map(([key, S]) => {
@@ -752,7 +758,7 @@
   function vStock() {
     const groups = [...new Set(D.MATERIALS.map(m => m.group))];
     const val = D.MATERIALS.reduce((a, m) => a + s.stock[m.key] * E.matPrice(s, m.key), 0);
-    return `<div class="kpis">${kpiTile('Стоимость запасов', money(val), '', '')}${kpiTile('В пути', `${s.orders.length} поставок`, s.orders.length ? `ближайшая через ${Math.min(...s.orders.map(o => o.days))} дн.` : '', '')}${kpiTile('Срок поставки', `${E.leadTime(s)} дн.`, 'зависит от службы МТС', '')}
+    return `<div class="kpis">${kpiTile('Стоимость запасов', money(val), '', '')}${kpiTile('В пути', `${s.orders.length} поставок`, s.orders.length ? `ближайшая через ${Math.max(1, Math.ceil(Math.min(...s.orders.map(o => o.days))))} дн.` : '', '')}${kpiTile('Срок поставки', `${E.leadTime(s)} дн.`, 'зависит от службы МТС', '')}
       <div class="kpi"><div class="k-l">Автозакупка</div><div class="k-v">${btn(s.auto.buy ? 'Включена' : 'Выключена', 'toggle', 'buy', s.auto.buy ? 'on' : '')}</div><div class="k-s">по понедельникам до 2× минимума</div></div></div>
       ${groups.map(g => card(g, `<div class="stock">${D.MATERIALS.filter(m => m.group === g).map(m => {
         const locked = m.tech && !E.has(s, m.tech); const st = s.stock[m.key];
@@ -763,7 +769,7 @@
           <div class="m-q"><b class="${st < min * 0.5 ? 'tbad' : st < min ? 'twarn' : 'tgood'}">${num(st)}</b><small>${m.unit} · мин. ${num(min)}${tr ? ` · в пути ${num(tr)}` : ''}</small>${bar(r, st < min * 0.5 ? 'bad' : st < min ? 'warn' : 'good')}</div>
           <div class="m-a">${locked ? '<small>🔒 нужна технология</small>' : btn(`+${num(min)}`, 'buy', `${m.key}:${min}`, 'small') + btn('Купить…', 'buyForm', m.key, 'small primary')}</div></div>`;
       }).join('')}</div>`)).join('')}
-      ${s.orders.length ? card('Поставки в пути', `<table class="tbl"><tbody>${s.orders.map(o => `<tr><td>${esc(E.matName(o.key))}</td><td>${num(o.qty)}</td><td>${o.days} дн.</td></tr>`).join('')}</tbody></table>`) : ''}
+      ${s.orders.length ? card('Поставки в пути', `<table class="tbl"><tbody>${s.orders.map(o => `<tr><td>${esc(E.matName(o.key))}</td><td>${num(o.qty)}</td><td>${Math.max(1, Math.ceil(o.days))} дн.</td></tr>`).join('')}</tbody></table>`) : ''}
       <p class="hint">Деэмульгатор — подготовка нефти, ингибитор — защита РВС, ДЭГ — осушка газа, НКТ/штанги/насосы — ремонты.</p>`;
   }
 
@@ -781,7 +787,7 @@
       ${kpiTile('Доступная мощность', `${num(en.supply.total)} кВт`, `резерв ${num(en.supply.total - en.demand)} кВт`, en.supply.total >= en.demand ? 'good' : 'bad')}
       ${kpiTile('Тариф сети', `${num(tariff, 2)} ₸/кВт·ч`, `в сутки ≈ ${money((en.used.grid || 0) * 24 * tariff)}`, '')}</div>
       <div class="grid2">${card('Потребители, кВт', `<div class="hbars">${items.map(([n, v]) => `<div class="hb"><span>${esc(n)}</span><div class="hbt"><i style="width:${(v / maxI * 100).toFixed(1)}%"></i></div><b>${num(v)}</b></div>`).join('')}</div>`)}
-      ${card('Источники', G.donut({ items: src.map(([n, k, c]) => ({ name: n, value: en.used[k] || 0, color: c })), center: num(en.demand), sub: 'кВт', unit: 'кВт' }) + `<div class="brig">Дизель-генераторы в работе: ${btn(s.auto.dgu ? 'вкл' : 'выкл', 'toggle', 'dgu', 'small ' + (s.auto.dgu ? 'on' : ''))} <small>Дизель: ${num(s.stock.diesel)} л</small></div>`)}</div>
+      ${card('Источники', G.donut({ items: src.map(([n, k, c]) => ({ name: n, value: en.used[k] || 0, color: c })), center: num(en.demand), sub: 'кВт', unit: 'кВт' }) + `<div class="brig tumrow">${tumbler(s.auto.dgu, 'toggle', 'dgu', 'Дизель-генераторы')}<div><b>Дизель-генераторы в работе</b><small>${s.auto.dgu ? 'включены — подхватят нагрузку при нехватке сети' : 'выключены'} · склад ГСМ: ${num(s.stock.diesel)} л</small></div></div>${ownFuelRow()}`)}</div>
       ${card('Мощность и потребление, кВт (90 дней)', G.line({ labels: d.map(x => x.d.slice(5).split('-').reverse().join('.')), series: [{ name: 'Доступная мощность', color: C.aqua, values: d.map(x => x.eS) }, { name: 'Потребление (при полной загрузке)', color: C.orange, values: d.map(x => x.eD) }], height: 180, unit: 'кВт' }))}
       ${card('Энергообъекты', `<div class="tscroll"><table class="tbl"><tbody>${pf.map(f => `<tr><td><b>${esc(f.name)}</b></td><td>${num(f.cap)} кВт</td><td style="min-width:100px">${bar(f.health / 100)}</td><td>${f.status === 'ok' ? pill('в работе', 'good') : pill('авария', 'bad')}</td><td>${btn('ТО', 'maintain', f.id, 'small')}</td></tr>`).join('')}</tbody></table></div>
         <div class="btnrow">${btn('Подстанция +2000 кВт', 'tender', 'substation')}${btn('ДГУ 500 кВт', 'tender', 'dgu')}${E.has(s, 'gtes') ? btn('ГТЭС 4 МВт', 'tender', 'gtes') : ''}${E.has(s, 'ses') ? btn('СЭС 1 МВт', 'tender', 'ses') : ''}</div>
@@ -838,7 +844,7 @@
       <div class="btnrow">${btn('Взять кредит…', 'loanForm', '', 'primary')}</div><p class="hint">Платёж в конце месяца. Ставка зависит от рынка и доверия совета.</p>`)}
     <div class="seg">${[12, 36, 120].map(n => `<button class="${ui.finRange === n ? 'on' : ''}" data-act="finRange" data-arg="${n}">${n === 120 ? 'Всё' : n + ' мес.'}</button>`).join('')}</div>
     <div class="grid2">${card('Ставки по месяцам, %', G.line({ labels: h.map(x => ymRu(x.m)), series: [{ name: 'Базовая', color: C.violet, values: h.map(x => x.rate != null ? x.rate * 100 : null) }, { name: 'Депозит 12 мес.', color: C.aqua, values: h.map(x => x.rate != null ? Math.max(1, (x.rate + D.DEPOSITS.t12.spread) * 100) : null), dash: true }], height: 180, unit: '%', zero: false, empty: 'Появится после первого месяца' }))}
-      ${card('Депозиты и долг', G.line({ labels: h.map(x => ymRu(x.m)), series: [{ name: 'Депозиты', color: C.aqua, values: h.map(x => x.dep ?? null), area: true }, { name: 'Долг', color: C.red, values: h.map(x => x.debt ?? null) }], height: 180, unit: '₸', empty: 'Появится после первого месяца' }))}</div>
+      ${card('Депозиты и долг', G.line({ labels: h.map(x => ymRu(x.m)), series: [{ name: 'Депозиты', color: C.aqua, values: h.map(x => x.deps ?? x.dep ?? null), area: true }, { name: 'Долг', color: C.red, values: h.map(x => x.debt ?? null) }], height: 180, unit: '₸', empty: 'Появится после первого месяца' }))}</div>
     ${card('Процентные доходы и расходы по месяцам', G.bars({ labels: h.map(x => ymRu(x.m)), series: [{ name: 'Доход по депозитам', color: C.aqua, values: h.map(x => (x.cats || {})['Проценты по депозитам'] || 0) }, { name: 'Проценты по кредитам', color: C.red, values: h.map(x => -((x.cats || {})['Проценты по кредитам'] || 0)) }], height: 180, unit: '₸', empty: 'Появится после первого месяца' }))}`;
   }
   function vLedger() {
@@ -882,10 +888,10 @@
     const risk = E.hseRisk(s);
     const drill = key => { const last = H.drills[key]; const ago = last == null ? null : s.day - last; const lim = key === 'fire' ? 183 : 365; return { last, ago, over: ago == null || ago > lim }; };
     return `<div class="kpis">
-      ${kpiTile('Дней без травм', `<span class="bignum">${H.daysNoInj}</span>`, H.injuries.length ? `последний случай ${dateRu(H.injuries[H.injuries.length - 1].date)}` : 'с начала работы', H.daysNoInj >= 365 ? 'good' : H.daysNoInj >= 90 ? '' : 'warn')}
+      <div class="kpi ${H.daysNoInj >= 365 ? 'good' : H.daysNoInj >= 90 ? '' : 'warn'}">${G.safetyBoard(H.daysNoInj, H.injuries.length ? `последний случай ${dateRu(H.injuries[H.injuries.length - 1].date)}` : 'с начала работы')}</div>
       ${kpiTile('Травм за 12 мес.', inj12.length, `LTIFR ${num(E.ltifr(s), 2)} на 1 млн чел.-ч`, inj12.length ? 'bad' : 'good')}
-      <div class="kpi">${G.gauge({ value: H.readiness, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.readiness) + '%', label: 'Готовность к ЧС' })}</div>
-      <div class="kpi">${G.gauge({ value: H.culture, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.culture) + '%', label: 'Культура безопасности' })}</div>
+      <div class="kpi">${G.signal({ value: H.readiness, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.readiness) + '%', label: 'Готовность к ЧС' })}</div>
+      <div class="kpi">${G.signal({ value: H.culture, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.culture) + '%', label: 'Культура безопасности' })}</div>
       ${kpiTile('Штрафы за 12 мес.', money(fines12.reduce((a, f) => a + f.amount, 0)), `${fines12.length} предписаний`, fines12.length ? 'bad' : 'good')}
       <button class="kpi lnk ${!s.today || !s.today.gas || s.today.gas.util >= 0.8 ? 'good' : s.today.gas.util >= 0.4 ? 'warn' : 'bad'}" data-go="gas:mks"><div class="k-l">Утилизация ПНГ</div><div class="k-v">${s.today && s.today.gas ? pct(s.today.gas.util) : '—'}</div><div class="k-s">схема газа: ЦДПиТГ ›</div></button>
       ${kpiTile('Индекс ОТ и экологии', num(E.hseIndex(s)) + ' / 100', `место в ТОП-100: ${(s.paramRanks || {}).hse || '—'}`, E.hseIndex(s) >= 70 ? 'good' : E.hseIndex(s) >= 40 ? 'warn' : 'bad')}
@@ -946,10 +952,147 @@
           <div class="btnrow">${btn('Построить МКС', 'tender', 'gascomp', 'primary')}${E.has(s, 'gtes') ? btn('ГТЭС 4 МВт', 'tender', 'gtes') : btn('Технология ГТЭС', 'gotech', '', '')}</div>`)}`;
     
   }
+  /* ===================== БЫТ: вахтовый посёлок, столовая, общежития ===================== */
+  function campScene(st) {
+    const dorms = E.facs(s, 'dorm'), cans = E.facs(s, 'canteen'), banya = E.facs(s, 'banya')[0], club = E.facs(s, 'club')[0];
+    let left = st.housed;
+    const dormSvg = (f, i) => {
+      const x = 20 + i * 150, ok = f.status === 'ok', cap = f.cap, live = ok ? Math.min(cap, left) : 0; left -= live;
+      const lit = Math.round(live / cap * 12);
+      let win = ''; for (let r = 0; r < 2; r++) for (let c = 0; c < 6; c++) { const k = r * 6 + c; win += `<rect x="${x + 10 + c * 19}" y="${118 + r * 32}" width="11" height="15" fill="${ok && k < lit ? '#ffd76a' : '#22303c'}" stroke="#14100c" stroke-width=".8"${ok && k < lit ? ' class="win"' : ''}/>`; }
+      return `<g><rect x="${x}" y="98" width="130" height="92" fill="${ok ? '#b9714e' : '#6d5243'}" stroke="#4a2c1d"/><path d="M${x - 4} 98 L${x + 65} 78 L${x + 134} 98Z" fill="#5d6a73" stroke="#2f363b"/>
+        ${[0, 1, 2, 3, 4, 5, 6, 7, 8].map(k => `<line x1="${x}" y1="${104 + k * 10}" x2="${x + 130}" y2="${104 + k * 10}" stroke="#9c5b3c" stroke-width=".5"/>`).join('')}${win}
+        <rect x="${x + 55}" y="168" width="20" height="22" fill="#4a3426"/><rect x="${x + 35}" y="100" width="60" height="11" rx="1" fill="#f1ead2" stroke="#4a2c1d"/><text x="${x + 65}" y="108.5" text-anchor="middle" font-size="6.5" font-weight="700" fill="#7a1a1a" font-family="Georgia,serif">ОБЩЕЖИТИЕ №${i + 1}</text>
+        ${ok ? '' : `<path d="M${x} 190 L${x + 130} 98 M${x + 130} 190 L${x} 98" stroke="#c9a227" stroke-width="2" opacity=".6"/>`}</g>`;
+    };
+    const can = cans[0], cx = 20 + Math.min(3, dorms.length) * 150, cok = can && can.status === 'ok';
+    return `<svg class="camp" viewBox="0 0 640 230" role="img" aria-label="Вахтовый посёлок">
+      <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d2b44"/><stop offset=".7" stop-color="#6b4a4a"/><stop offset="1" stop-color="#c47a4a"/></linearGradient></defs>
+      <rect width="640" height="200" fill="url(#sky)"/><rect y="190" width="640" height="40" fill="#5c4b33"/><rect y="196" width="640" height="10" fill="#3a3a3a"/>
+      ${[0, 1, 2, 3, 4, 5, 6].map(i => `<line x1="${i * 100 + 10}" y1="201" x2="${i * 100 + 40}" y2="201" stroke="#e6e0c8" stroke-width="1.5"/>`).join('')}
+      <circle cx="590" cy="40" r="14" fill="#ffe9a8" opacity=".85"/>
+      <g opacity=".5"><path d="M0 120 L40 100 L80 116 L130 92 L190 118 L250 104 L300 120 L640 120 L640 200 L0 200Z" fill="#2c2a2a"/></g>
+      <g transform="translate(560 60)"><path d="M10 130 L18 40 L26 130Z M12 100 L24 100 M14 70 L22 70" stroke="#40464c" stroke-width="2" fill="none"/></g>
+      ${dorms.slice(0, 3).map(dormSvg).join('')}
+      ${can ? `<g><rect x="${cx}" y="128" width="120" height="62" fill="${cok ? '#d9cfae' : '#8d8670'}" stroke="#5c5440"/><rect x="${cx - 4}" y="122" width="128" height="8" fill="#6b7a82"/>
+        ${[0, 1, 2, 3].map(k => `<rect x="${cx + 8 + k * 28}" y="140" width="20" height="24" fill="${cok ? '#ffe39a' : '#22303c'}" stroke="#5c5440"/>`).join('')}
+        <rect x="${cx + 50}" y="168" width="20" height="22" fill="#5c4632"/><text x="${cx + 60}" y="118" text-anchor="middle" font-size="12" font-weight="900" fill="#d32f2f" font-family="Georgia,serif" letter-spacing="1">СТОЛОВАЯ</text>
+        <rect x="${cx + 96}" y="100" width="8" height="24" fill="#6b4a3a"/>${cok ? `<g class="smoke-c"><circle cx="${cx + 100}" cy="96" r="5" fill="#cfd4d8" opacity=".5"/><circle cx="${cx + 104}" cy="86" r="7" fill="#cfd4d8" opacity=".35"/><circle cx="${cx + 98}" cy="74" r="9" fill="#cfd4d8" opacity=".2"/></g>` : ''}</g>` : ''}
+      ${banya ? `<g><rect x="${cx + 135}" y="160" width="46" height="30" fill="#8a6440" stroke="#4a3220"/>${[0, 1, 2].map(k => `<line x1="${cx + 135}" y1="${166 + k * 8}" x2="${cx + 181}" y2="${166 + k * 8}" stroke="#6a4a2c"/>`).join('')}<path d="M${cx + 131} 160 L${cx + 158} 146 L${cx + 185} 160Z" fill="#4a3a2a"/><text x="${cx + 158}" y="184" text-anchor="middle" font-size="7" font-weight="700" fill="#f6e7b0">БАНЯ</text>${banya.status === 'ok' ? `<g class="smoke-c"><circle cx="${cx + 170}" cy="140" r="4" fill="#cfd4d8" opacity=".5"/><circle cx="${cx + 173}" cy="131" r="6" fill="#cfd4d8" opacity=".3"/></g>` : ''}</g>` : ''}
+      ${club ? `<g><rect x="${cx + 200}" y="140" width="60" height="50" fill="#e3d6b0" stroke="#5c5440"/><path d="M${cx + 195} 140 L${cx + 230} 124 L${cx + 265} 140Z" fill="#7a1a1a"/><line x1="${cx + 230}" y1="124" x2="${cx + 230}" y2="104" stroke="#555"/><path class="flag" d="M${cx + 230} 104 h16 v9 h-16z" fill="#d32f2f"/><text x="${cx + 230}" y="170" text-anchor="middle" font-size="8" font-weight="900" fill="#7a1a1a" font-family="Georgia,serif">КЛУБ</text></g>` : ''}
+      <g><line x1="40" y1="44" x2="40" y2="98" stroke="#555" stroke-width="2"/><line x1="300" y1="44" x2="300" y2="98" stroke="#555" stroke-width="2"/><rect x="40" y="36" width="260" height="14" fill="#c62828"/><text x="170" y="46.5" text-anchor="middle" font-size="9" font-weight="900" fill="#ffe082" font-family="Georgia,serif" letter-spacing="1">СЛАВА ТРУДУ НЕФТЯНИКОВ!</text></g>
+      <g class="bus"><rect x="0" y="182" width="46" height="18" rx="4" fill="#e8892b" stroke="#7a4410"/><rect x="4" y="185" width="34" height="6" fill="#9ccbe8"/><rect x="40" y="185" width="4" height="10" fill="#9ccbe8"/><circle cx="10" cy="201" r="3.5" fill="#111"/><circle cx="36" cy="201" r="3.5" fill="#111"/><text x="22" y="198" text-anchor="middle" font-size="4.5" fill="#fff" font-weight="700">ВАХТА</text></g>
+    </svg>`;
+  }
+  function chalkMenu(key, compact) {
+    const M = E.MENU[key];
+    return `<div class="chalk${compact ? ' sm' : ''}"><div class="ch-h">МЕНЮ · ${esc(M.name.toUpperCase())}</div>${M.dishes.map(d => `<div class="ch-r"><span>• ${esc(d)}</span></div>`).join('')}<div class="ch-f">в день на человека: ${num(M.cost * idx())} ₸</div></div>`;
+  }
+  function vSoc() {
+    const sb = sub(), st = E.socStats(s), mor = st.morTotal;
+    const kp = `<div class="kpis">
+      ${kpiTile('Проживают', `${num(st.housed)} / ${num(st.beds)}`, st.homeless ? `без места: ${st.homeless} чел. — съём жилья` : 'койко-мест хватает', st.homeless ? 'bad' : 'good')}
+      ${kpiTile('Питаются в столовой', `${num(st.fed)} / ${num(st.N)}`, `${num(st.seats)} мест в 2 смены`, st.unfed ? 'warn' : 'good')}
+      ${kpiTile('Влияние на мораль', (mor >= 0 ? '+' : '') + num(mor, 1), Object.entries(st.mor).filter(([, v]) => Math.abs(v) >= 0.5).map(([k, v]) => `${k} ${v >= 0 ? '+' : ''}${num(v, 1)}`).join(' · ') || 'нейтрально', mor >= 2 ? 'good' : mor >= -2 ? '' : 'bad')}
+      ${kpiTile('Расходы на быт', money(st.food + st.rent) + '/сут', `питание ${money(st.food)}${st.rent ? ' · аренда ' + money(st.rent) : ''}`)}
+    </div>`;
+    if (sb === 'food') {
+      const cans = E.facs(s, 'canteen');
+      return `${kp}<div class="grid2">
+        ${card('Сегодня в столовой', chalkMenu(s.soc.menu))}
+        ${card('Выбор питания', `<div class="menus">${Object.entries(E.MENU).map(([k, M]) => `<button class="menu-c ${s.soc.menu === k ? 'on' : ''}" data-act="menu" data-arg="${k}"><b>${M.name}</b><span>${num(M.cost * idx())} ₸/чел. в день</span><small>мораль ${M.mor >= 0 ? '+' : ''}${M.mor} · травмы ${M.hse < 1 ? '−' : M.hse > 1 ? '+' : ''}${Math.round(Math.abs(1 - M.hse) * 100)}% · отравления ×${M.sick}</small></button>`).join('')}</div>
+          <p class="hint">Кто не поместился в столовую — получает сухой паёк. Сухпаёк на всех — замечание Санэпиднадзора.</p>`)}
+      </div>
+      ${card('Столовые', `<div class="gwells">${cans.map(f => `<div class="gwell ${f.status === 'ok' ? 'work' : 'fail'}"><div class="w-h"><b>${G.icon('dorm')} ${esc(f.name)}</b>${facPill(f)}</div>${G.plate({ id: f.id })}
+        ${f.status !== 'ok' ? G.danger('НЕ ВКЛЮЧАТЬ! РАБОТАЮТ ЛЮДИ', 'столовая закрыта') : ''}<div class="kv3"><div><span>Мест</span><b>${f.cap} × 2 смены</b></div><div><span>Санитария</span><b class="${f.health < 50 ? 'tbad' : 'tgood'}">${f.health < 50 ? 'плохо' : 'норма'}</b></div></div>
+        ${bar(f.health / 100, f.health < 40 ? 'bad' : f.health < 65 ? 'warn' : 'good')}<small>износ ${Math.round(100 - f.health)}%${f.health < 50 ? ' — риск отравлений и штрафа' : ''}</small><div class="btnrow">${fixBtns(f)}</div></div>`).join('')}</div>
+        <div class="btnrow">${btn('Построить столовую · ' + money(D.BUILD.canteen.cost * idx()), 'tender', 'canteen', 'primary')}</div>`)}`;
+    }
+    if (sb === 'dorm') {
+      let left = st.housed;
+      const rows = E.facs(s, 'dorm').map(f => { const live = f.status === 'ok' ? Math.min(Math.floor(f.cap * (0.6 + 0.4 * f.health / 100)), left) : 0; left -= live;
+        return `<div class="gwell ${f.status === 'ok' ? 'work' : 'fail'}"><div class="w-h"><b>${G.icon('dorm')} ${esc(f.name)}</b>${facPill(f)}</div>${G.plate({ id: f.id })}
+          ${f.status !== 'ok' ? G.danger('НЕ ВКЛЮЧАТЬ! РАБОТАЮТ ЛЮДИ', 'жильцы выселены на время ремонта') : ''}
+          <div class="kv3"><div><span>Живут</span><b>${live} / ${f.cap}</b></div><div><span>Условия</span><b class="${f.health < 50 ? 'tbad' : f.health < 70 ? 'twarn' : 'tgood'}">${f.health < 50 ? 'аварийные' : f.health < 70 ? 'удовл.' : 'хорошие'}</b></div></div>
+          ${bar(live / f.cap, 'good')}<small>заселённость</small>${bar(f.health / 100, f.health < 40 ? 'bad' : f.health < 65 ? 'warn' : 'good')}<small>износ ${Math.round(100 - f.health)}% — изношенное общежитие теряет места и мораль</small><div class="btnrow">${fixBtns(f)}</div></div>`; }).join('');
+      const extra = ['banya', 'club'].map(t => { const f = E.facs(s, t)[0]; return f ? `<div class="gwell work"><div class="w-h"><b>${G.icon('dorm')} ${esc(f.name)}</b>${facPill(f)}</div><small>${D.BUILD[t].desc}</small>${bar(f.health / 100)}<div class="btnrow">${fixBtns(f)}</div></div>` : `<div class="gwell"><div class="w-h"><b>${G.icon('dorm')} ${D.BUILD[t].name}</b>${pill('нет', '')}</div><small>${D.BUILD[t].desc}</small><div class="btnrow">${btn('Построить · ' + money(D.BUILD[t].cost * idx()), 'tender', t, 'small primary')}</div></div>`; }).join('');
+      return `${kp}${card('Общежития', `<div class="gwells">${rows}</div><div class="btnrow">${btn('Общежитие 120 мест · ' + money(D.BUILD.dorm.cost * idx()), 'tender', 'dorm', 'primary')}</div>
+        <p class="hint">Не хватает мест — люди снимают жильё за счёт компании (${money(1500 * idx())} в сутки), мораль падает, растёт риск травм.</p>`)}
+        ${card('Отдых', `<div class="gwells">${extra}</div>`)}`;
+    }
+    return `${card('Посёлок', `<div class="ubar"><span>Койко-места</span>${bar(st.beds ? st.housed / st.beds : 0, st.homeless ? 'bad' : 'good')}<b>${pct(st.beds ? Math.min(1, st.N / st.beds) : 1)}</b></div><div class="ubar"><span>Места в столовой</span>${bar(st.seats ? Math.min(1, st.N / st.seats) : 1, st.unfed ? 'warn' : 'good')}<b>${pct(st.seats ? Math.min(1, st.N / st.seats) : 1)}</b></div><div class="ubar"><span>Спортзал / клуб</span><small>${st.banya ? 'спортзал есть' : 'спортзала нет'} · ${st.club ? 'клуб есть' : 'клуба нет'}</small><b></b></div>`)}${kp}
+      <div class="grid2">${card('Сегодня в столовой', chalkMenu(s.soc.menu, true) + `<div class="btnrow">${btn('Изменить меню', 'gosub', 'soc:food', 'small')}</div>`)}
+      ${card('Из чего складывается мораль', `<div class="tscroll"><table class="tbl"><tbody>${Object.entries(st.mor).map(([k, v]) => `<tr><td>${k}</td><td class="${v > 0 ? 'tgood' : v < 0 ? 'tbad' : ''}">${v >= 0 ? '+' : ''}${num(v, 1)}</td></tr>`).join('')}</tbody></table></div><p class="hint">Плюс зарплата, нагрузка и СИЗ — на вкладке «Персонал».</p>`)}</div>`;
+  }
+  /* ===================== Автопарк ===================== */
+  const vPlate = p => `<span class="lplate">${esc(p)}<i>KZ</i></span>`;
+  function dueCell(label, day, warnD) {
+    const d = day - s.day, cls = d < 0 ? 'tbad' : d <= warnD ? 'twarn' : 'tgood';
+    return `<div><span>${label}</span><b class="${cls}">${d < 0 ? 'просрочено ' + (-d) + ' дн' : 'через ' + d + ' дн'}</b></div>`;
+  }
+  const VST = { ok: ['на линии', 'good'], repair: ['в мастерской', 'warn'], fail: ['неисправна', 'bad'], ban: ['запрет: нет ПТО', 'bad'] };
+  function vFleet() {
+    const sb = sub(), F = s.fleet, A = E.fleetAvail(s), FS = E.fleetSpeed(s), i = idx(), cars = F.cars, dslP = D.MATERIALS.find(m => m.key === 'diesel').price * i;
+    const ktg = E.ktg(s), over = cars.filter(c => s.day > c.to || s.day > c.pto).length, rentD = sum(E.VT, t => A.rent[t] * D.VEH[t].cost * 0.0015) * i;
+    const kp = `<div class="kpis">
+      ${kpiTile('КТГ (готовность)', pct(ktg), `${cars.filter(c => c.status === 'ok').length} из ${cars.length} на линии`, ktg >= 0.9 ? 'good' : ktg >= 0.75 ? 'warn' : 'bad')}
+      ${kpiTile('Просрочено ТО / ПТО', num(over), over ? 'износ ×2, риск поломок' : 'всё по графику', over ? 'bad' : 'good')}
+      ${kpiTile('Наём у подрядчиков', money(rentD) + '/сут', !F.rent ? 'наём выключен' : rentD > 0 ? 'покрывает нехватку' : 'не требуется', rentD > 0 ? 'warn' : 'good')}
+      ${kpiTile('Запчасти', `${num(s.stock.vparts)} компл`, `ТО — 1, ремонт — 2 компл`, s.stock.vparts < 2 ? 'bad' : s.stock.vparts < 6 ? 'warn' : 'good')}
+    </div>`;
+    if (sb === 'cars') {
+      const list = cars.slice().sort((a, b) => (a.status === 'ok') - (b.status === 'ok') || a.health - b.health);
+      return `${kp}<div class="gwells">${list.map(c => { const V = D.VEH[c.type], [stT, stC] = VST[c.status];
+        return `<div class="gwell vcard ${c.status === 'ok' ? 'work' : 'fail'}"><div class="w-h"><b>${esc(c.name)}</b>${pill(stT, stC)}</div>
+          <div class="vrow2"><div class="fdw">${G.fuelDial({ id: c.id, level: (c.fl || 0) / V.tank, text: `${Math.round(c.fl || 0)} / ${V.tank} л` })}</div><div>${vPlate(c.plate)}<div class="kmrow">${G.odometer(c.km * 10, 7, 'v' + c.id, 1)}<small>км</small></div><small>расход ${V.fuel} л/сут · ${money(V.fuel * dslP)}/сут</small></div></div>
+          ${bar(c.health / 100, c.health < 30 ? 'bad' : c.health < 60 ? 'warn' : 'good')}<small>техсостояние ${Math.round(c.health)}% · КПД ${Math.round(E.vehQ(s, c) * 100)}%${c.status === 'repair' ? ` · в мастерской ещё ${c.down} сут` : ''}</small>
+          <div class="kv3">${dueCell('ЧТО', c.chto, 3)}${dueCell('ТО-2', c.to, 10)}${dueCell('ПТО', c.pto, 30)}</div>
+          <div class="btnrow">${c.status === 'fail' ? btn('Ремонт · ' + money(E.vehCost.repair * i), 'veh', 'repair:' + c.id, 'small primary') : ''}${c.status === 'ok' ? btn('ЧТО', 'veh', 'chto:' + c.id, 'small') : ''}${c.status !== 'fail' ? btn('ТО', 'veh', 'to:' + c.id, 'small') + btn('ПТО', 'veh', 'pto:' + c.id, 'small') : ''}${(c.fl || 0) < V.tank - 1 && c.status !== 'fail' ? btn('Заправить', 'veh', 'fuel:' + c.id, 'small') : ''}${btn('Списать', 'veh', 'sell:' + c.id, 'small ghost')}</div></div>`; }).join('')}</div>`;
+    }
+    if (sb === 'to') {
+      const rows = cars.slice().sort((a, b) => Math.min(a.chto, a.to, a.pto) - Math.min(b.chto, b.to, b.pto));
+      const c = E.vehCost;
+      return `${kp}<div class="grid2">${card('Режим обслуживания', `<label class="check"><input type="checkbox" data-change="fleetAuto" ${F.auto ? 'checked' : ''}> Автообслуживание</label><p class="hint">ЧТО, ТО и ПТО по графику, ремонт сломанных, автозаказ запчастей, </p>
+          <label class="check"><input type="checkbox" data-change="fleetFuel" ${F.autoFuel !== false ? 'checked' : ''}> Автозаправка машин и спецтехники</label><p class="hint">Заправка до полного бака только когда стрелка уйдёт в красную зону (меньше ¼). Сначала со склада ГСМ, если дизеля нет — по топливной карте (+15%). Вручную заправить можно в любой момент. Выключено — пустая машина стоит.</p>
+          <label class="check"><input type="checkbox" data-change="fleetRent" ${F.rent ? 'checked' : ''}> Наём техники у подрядчиков</label><p class="hint">Нехватку техники закрывают подрядчики. Без найма — простой бригад ПРС и транспортного цеха</p>${ownFuelRow()}<p class="hint">Порядок заправки: сначала свой ДТ — со своих АЗС, затем из товарного парка НПЗ; потом склад ГСМ; если пусто — топливная карта (+15%). Свой дизель не покупается, но и не продаётся.</p>`)}
+        ${card('Регламент', `<div class="tscroll"><table class="tbl"><thead><tr><th>Вид</th><th>Период</th><th>Стоимость</th><th>Что даёт</th></tr></thead><tbody>
+          <tr><td>ЧТО — ежемесячное</td><td>30 дн</td><td>${money(c.chto * i)}</td><td>+3% состояния</td></tr>
+          <tr><td>ТО-2 — плановое</td><td>90 дн</td><td>${money(c.to * i)} + 1 компл</td><td>+15%, простой 1 сут</td></tr>
+          <tr><td>ПТО — техосмотр</td><td>365 дн</td><td>${money(c.pto * i)}</td><td>допуск к эксплуатации</td></tr>
+          <tr><td>Ремонт</td><td>по поломке</td><td>${money(c.repair * i)} + 2 компл</td><td>+25%, простой 3 сут</td></tr></tbody></table></div>
+          <p class="hint">Просроченное ТО удваивает износ и в 2,5 раза повышает риск поломок. Без ПТО машину выпускать на линию запрещено. При состоянии ниже 30% техосмотр не пройти.</p>`)}</div>
+        ${card('График обслуживания', `<div class="tscroll"><table class="tbl"><thead><tr><th>Машина</th><th>Номер</th><th>ЧТО</th><th>ТО-2</th><th>ПТО</th></tr></thead><tbody>${rows.map(v => { const f = (d, w) => { const x = d - s.day; return `<td class="${x < 0 ? 'tbad' : x <= w ? 'twarn' : ''}">${x < 0 ? 'просроч.' : x + ' дн'}</td>`; }; return `<tr><td>${esc(v.name)}</td><td>${esc(v.plate)}</td>${f(v.chto, 3)}${f(v.to, 10)}${f(v.pto, 30)}</tr>`; }).join('')}</tbody></table></div>`)}
+        ${card('Склад запчастей', `<div class="ubar"><span>Запчасти автотехники</span>${bar(Math.min(1, s.stock.vparts / 12), s.stock.vparts < 2 ? 'bad' : s.stock.vparts < 6 ? 'warn' : 'good')}<b>${num(s.stock.vparts)}</b></div>
+          <div class="btnrow">${btn('Купить 6 компл · ' + money(6 * D.MATERIALS.find(m => m.key === 'vparts').price * i), 'vparts', '6', 'small')}${btn('Купить 20 компл', 'vparts', '20', 'small')}</div>`)}`;
+    }
+    // парк: потребность и наличие по видам
+    const rows = E.VT.map(t => { const V = D.VEH[t], n = cars.filter(c => c.type === t).length, ok = A.own[t], need = A.need[t], short = Math.max(0, need - ok);
+      return `<div class="gwell ${short ? (A.rent[t] ? 'warn' : 'fail') : 'work'}"><div class="w-h"><b>${esc(V.name)}</b>${pill(`${ok} / ${need}`, short ? (A.rent[t] ? 'warn' : 'bad') : 'good')}${pill('КПД ' + Math.round(FS.q[t] * 100) + '%', FS.q[t] >= 0.9 ? 'good' : FS.q[t] >= 0.7 ? 'warn' : 'bad')}</div>
+        <div class="vrow2"><small>${esc(V.desc)}. Бак ${V.tank} л, расход ${V.fuel} л/сут.${n > ok ? ` Не на линии: ${n - ok}.` : ''}${A.rent[t] ? ` Нанято: ${A.rent[t]}.` : ''}</small></div>
+        <div class="btnrow">${btn('Купить · ' + money(V.cost * i), 'vbuy', t, 'small')}</div></div>`; }).join('');
+    const fuelD = F.fuelD || 0;
+    const sp = (v, l, id, sub) => G.panelMeter({ value: v, label: l, id, sub });
+    const effRow = (n, v) => `<tr><td>${n}</td><td class="${v >= 0.95 ? 'tgood' : v < 0.8 ? 'tbad' : 'twarn'}">${Math.round(v * 100)}%</td></tr>`;
+    const speedCard = card('Эффективность техники', `<div class="speedos">
+        ${sp(FS.prs, 'ПРС', 'prs', 'подъёмники, агрегаты ЦА')}
+        ${sp(FS.build, 'Стройка', 'bld', 'автокраны')}
+        ${sp(FS.supply, 'Снабжение МТР', 'sup', 'краны, автоцистерны')}
+        ${sp(FS.trans, 'Транспортный цех', 'trn', 'спецтехника')}</div>
+      <div class="tscroll"><table class="tbl"><tbody>
+        ${effRow('Ремонт скважин (ПРС)', FS.prs)}${effRow('Строительство объектов', FS.build)}${effRow('Доставка МТР на склад', FS.supply)}${effRow('Транспортный цех', FS.trans)}${effRow('Доставка смены (рабочее время)', FS.people)}
+      </tbody></table></div>
+      <p class="hint">Эффективность зависит от числа машин, их техсостояния и своевременного ТО. Наёмная техника работает на 20% хуже своей, просроченное ТО — −10%. Резервные машины сверх нормы дают до +15%. Ниже 100% — работы идут дольше, выше — раньше срока.</p>`);
+    return `${kp}${speedCard}${card('Потребность промысла в технике', `<div class="gwells">${rows}</div><p class="hint">Подъёмники нужны бригадам ПРС, спецтехника — транспортному цеху (глушение, промывка, подвоз, монтаж), вахтовки и легковые — для доставки людей. Водители набираются автоматически по числу машин.</p>`)}
+      <div class="grid2">${card('ГСМ автопарка', `<label class="check"><input type="checkbox" data-change="fleetFuel" ${F.autoFuel !== false ? 'checked' : ''}> Автозаправка (при красной зоне)</label><div class="fdrow"><div class="fdw big">${G.fuelDial({ id: 'fleet', level: sum(cars, c => c.fl || 0) / Math.max(1, sum(cars, c => D.VEH[c.type].tank)), text: `${num(sum(cars, c => c.fl || 0))} л в баках`, sub: 'весь автопарк' })}</div><div class="kv3 col"><div><span>Расход за сутки</span><b>${money(fuelD * dslP)}</b></div><div><span>За месяц</span><b>${money(F.costM || 0)}</b></div><div><span>Прошлый месяц</span><b>${F.lastM ? money(F.lastM.cost) : '—'}</b></div></div></div><div class="kv3"><div><span>Дизель в сутки</span><b>${num(fuelD)} л</b></div><div><span>Склад дизеля</span><b class="${s.stock.diesel < fuelD * 5 ? 'twarn' : ''}">${num(s.stock.diesel)} л</b></div><div><span>По топливным картам</span><b>${num(F.cardD || 0)} л</b></div><div><span>Свой ДТ (АЗС/НПЗ)</span><b class="tgood">${num(F.ownD || 0)} л</b></div></div>${ownFuelRow()}`)}
+      ${card('Водители', `<div class="kv3"><div><span>В штате</span><b>${num(s.staff.drv.n)}</b></div><div><span>Нужно</span><b>${num(E.coverage(s).need.drv)}</b></div><div><span>Машин</span><b>${cars.length}</b></div></div>`)}</div>`;
+  }
   /* ===================== НПЗ ===================== */
   const sum = (a, f) => a.reduce((x, y) => x + f(y), 0);
   const FK = ['ai', 'a95', 'a98', 'dt', 'mz'], PK = FK, FCOL = { ai: '#3fbf6f', a95: '#2fb3a8', a98: '#9b7be0', dt: '#d8c13a', mz: '#8a6a4a' };
-  const dsT = () => (s.today && s.today.ds) || { feed: 0, load: 0, out: { ai: 0, dt: 0, mz: 0 }, whole: { ai: 0, dt: 0, mz: 0 }, azs: { ai: 0, dt: 0 }, bought: 0, lost: 0, azsRev: 0, dem: null };
+  // показатели НПЗ/АЗС за сутки с безопасными значениями по умолчанию (старые сохранения, первый день)
+  const dsT = () => { const z = () => ({ ai: 0, a95: 0, a98: 0, dt: 0, mz: 0 }), d = (s.today && s.today.ds) || {};
+    return Object.assign({ feed: 0, load: 0, bought: 0, lost: 0, azsRev: 0, shopRev: 0, cars: 0, queue: 0, dry: 0, deliv: 0, hired: 0, dem: null, calc: null }, d,
+      { out: Object.assign(z(), d.out), whole: Object.assign(z(), d.whole), azs: Object.assign(z(), d.azs), side: Object.assign({ naf: 0, lpg: 0, vgo: 0, bit: 0 }, d.side) }); };
   const UNAME = { npz: 'ЭЛОУ-АТ', npz_vac: 'Вакуумный блок', npz_ref: 'Риформинг', npz_hdo: 'Гидроочистка', npz_fcc: 'Каткрекинг', npz_bit: 'Битумная' };
   const has = t => E.facs(s, t).length > 0;
   const uLoad = (R, u) => R && R.U[u] && R.U[u].cap > 0 ? R.U[u].in / R.U[u].cap : 0;
@@ -961,13 +1104,52 @@
     const crude = (E.oilPriceT(s, 3) - 1500 * i) * R.F;
     return { diff: (v - crude) / R.F, per: v / R.F };
   }
+  // Советская клиновая задвижка: чугунный корпус, выдвижной шпиндель, красный маховик, табличка
+  const valveMem = {};
   function valveSvg(x, y, key, open, label) {
-    const c = open ? '#3fbf6f' : '#e66767';
-    return `<g class="valve" data-act="valve" data-arg="${key}" role="button" aria-label="${label}: ${open ? 'открыта' : 'закрыта'}"><rect x="${x - 16}" y="${y - 16}" width="32" height="32" fill="transparent"/>
-      <path d="M${x - 10} ${y - 8} L${x} ${y} L${x - 10} ${y + 8}Z M${x + 10} ${y - 8} L${x} ${y} L${x + 10} ${y + 8}Z" fill="${c}" stroke="#0e151d" stroke-width="1.5"/>
-      <line x1="${x}" y1="${y}" x2="${x}" y2="${y - 12}" stroke="${c}" stroke-width="2.5"/><rect x="${x - 6}" y="${y - 16}" width="12" height="4" rx="1.5" fill="${c}"/>
-      ${open ? '' : `<line x1="${x - 12}" y1="${y + 12}" x2="${x + 12}" y2="${y - 12}" stroke="#e66767" stroke-width="2"/>`}</g>`;
+    const changed = valveMem[key] != null && valveMem[key] !== open; valveMem[key] = open;
+    const wy = y - 40, stemTop = open ? wy - 13 : wy - 3;
+    const spokes = [0, 60, 120].map(a => { const r = a * Math.PI / 180; return `<line x1="${(x - 10 * Math.cos(r)).toFixed(1)}" y1="${(wy - 10 * Math.sin(r)).toFixed(1)}" x2="${(x + 10 * Math.cos(r)).toFixed(1)}" y2="${(wy + 10 * Math.sin(r)).toFixed(1)}" stroke="#a51c1c" stroke-width="2"/>`; }).join('');
+    const plate = open ? ['ОТКРЫТО', '#1e5e2a', '#cfe8c9'] : ['ЗАКРЫТО', '#7f1414', '#f6d4cf'];
+    return `<g class="valve ${open ? 'v-open' : 'v-closed'}" data-act="valve" data-arg="${key}" role="button" aria-label="${label}: ${open ? 'открыта' : 'закрыта'}" transform="translate(${x} ${y}) scale(1.35) translate(${-x} ${-y})">
+      <rect x="${x - 24}" y="${y - 58}" width="48" height="90" fill="transparent"/>
+      <rect x="${x - 17}" y="${y - 12}" width="5" height="24" rx="1" fill="#3a4148" stroke="#151a1f"/><rect x="${x + 12}" y="${y - 12}" width="5" height="24" rx="1" fill="#3a4148" stroke="#151a1f"/>
+      ${[-9, 0, 9].map(d => `<circle cx="${x - 14.5}" cy="${y + d}" r="1" fill="#8d969e"/><circle cx="${x + 14.5}" cy="${y + d}" r="1" fill="#8d969e"/>`).join('')}
+      <path d="M${x - 12} ${y - 9} Q${x} ${y - 14} ${x + 12} ${y - 9} L${x + 12} ${y + 9} Q${x} ${y + 14} ${x - 12} ${y + 9}Z" fill="#2a2f34" stroke="#121518"/>
+      ${open ? `<rect x="${x - 10}" y="${y - 2}" width="20" height="4" fill="#4b5560" opacity=".8"/>` : `<rect x="${x - 2.5}" y="${y - 9}" width="5" height="18" fill="#b71c1c"/>`}
+      <path d="M${x - 7} ${y - 11} L${x - 4.5} ${y - 24} L${x + 4.5} ${y - 24} L${x + 7} ${y - 11}Z" fill="#30363c" stroke="#121518"/>
+      <rect x="${x - 6}" y="${y - 27}" width="12" height="4" rx="1" fill="#3a4148" stroke="#121518"/>
+      <line x1="${x - 4}" y1="${y - 27}" x2="${x - 3}" y2="${wy + 2}" stroke="#4b5560" stroke-width="2"/><line x1="${x + 4}" y1="${y - 27}" x2="${x + 3}" y2="${wy + 2}" stroke="#4b5560" stroke-width="2"/>
+      <line class="v-stem" x1="${x}" y1="${y - 24}" x2="${x}" y2="${stemTop}" stroke="#c9ced3" stroke-width="2.4"/>
+      ${open ? `<line x1="${x - 1.5}" y1="${wy - 6}" x2="${x + 1.5}" y2="${wy - 6}" stroke="#7f878e"/><line x1="${x - 1.5}" y1="${wy - 9}" x2="${x + 1.5}" y2="${wy - 9}" stroke="#7f878e"/>` : ''}
+      <g class="v-wheel ${changed ? (open ? 'spin-open' : 'spin-close') : ''}" style="transform-origin:${x}px ${wy}px">
+        <circle cx="${x}" cy="${wy}" r="11" fill="none" stroke="#c62828" stroke-width="3.4"/>
+        <circle cx="${x}" cy="${wy}" r="11" fill="none" stroke="#ef5350" stroke-width="1" stroke-dasharray="4 5" opacity=".7"/>
+        ${spokes}<circle cx="${x}" cy="${wy}" r="3" fill="#8e1616" stroke="#5c0d0d"/>
+      </g>
+      <rect x="${x - 19}" y="${y + 15}" width="38" height="10" rx="2" fill="${plate[2]}" stroke="${plate[1]}" stroke-width="1.2"/>
+      <text x="${x}" y="${y + 22.5}" text-anchor="middle" font-size="6.6" font-weight="800" letter-spacing=".4" fill="${plate[1]}" font-family="Georgia,serif">${plate[0]}</text>
+    </g>`;
   }
+  const ownFuelRow = () => { const L = E.ownDieselL(s), hasOwn = E.facs(s, 'azs').length || E.facs(s, 'npz').length, d = s.ownFuelD && s.ownFuelD.day === s.day ? s.ownFuelD : null;
+    return `<div class="brig tumrow">${tumbler(s.auto.ownFuel !== false, 'toggle', 'ownFuel', 'Своё топливо')}<div><b>Заправка своим дизелем (АЗС и НПЗ)</b><small>${!hasOwn ? 'нет своих АЗС и НПЗ — заправка со склада ГСМ' : s.auto.ownFuel === false ? 'выключено — заправка со склада ГСМ и по картам' : `доступно ${num(L)} л ДТ · сегодня взято: техника ${num(d ? d.fleet : 0)} л, ДГУ ${num(d ? d.dgu : 0)} л`}</small></div></div>`; };
+  // советский тумблер на панели: рычаг вверх — ВКЛ, вниз — ВЫКЛ, сигнальная лампа
+  const tumMem = {};
+  function tumbler(on, act, arg, label) {
+    const k = act + arg, ch = tumMem[k] != null && tumMem[k] !== on; tumMem[k] = on;
+    return `<button class="tumbler ${on ? 'on' : 'off'}${ch ? ' flip' : ''}" data-act="${act}" data-arg="${esc(String(arg))}" aria-label="${esc(label)}: ${on ? 'включено' : 'выключено'}"><svg viewBox="0 0 64 84" width="54" height="71" aria-hidden="true">
+      <rect x="2" y="2" width="60" height="80" rx="5" fill="#2b2f33" stroke="#0e1012"/><rect x="6" y="6" width="52" height="72" rx="3" fill="#3a4046"/>
+      ${[[9, 9], [55, 9], [9, 75], [55, 75]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2" fill="#9aa3ab" stroke="#1d2126" stroke-width=".6"/>`).join('')}
+      <text x="32" y="17" text-anchor="middle" font-size="7.5" font-weight="800" fill="${on ? '#f4f1e6' : '#8d969e'}" font-family="Georgia,serif">ВКЛ</text>
+      <text x="32" y="74" text-anchor="middle" font-size="7.5" font-weight="800" fill="${on ? '#8d969e' : '#f4f1e6'}" font-family="Georgia,serif">ВЫКЛ</text>
+      <circle cx="32" cy="44" r="10" fill="#c9ced3" stroke="#5b636b" stroke-width="1.2"/><circle cx="32" cy="44" r="6.5" fill="#7f878e"/>
+      <g class="tum-lever" style="transform-origin:32px 44px"><path d="M29 44 L28 22 Q32 19 36 22 L35 44Z" fill="#e3e6e9" stroke="#5b636b" stroke-width=".8"/><ellipse cx="32" cy="22" rx="4.2" ry="2.6" fill="#f4f6f8" stroke="#5b636b" stroke-width=".8"/></g>
+      <circle cx="50" cy="28" r="3.6" class="tum-lamp" fill="${on ? '#ff3b2f' : '#4a1512'}" stroke="#111" stroke-width=".8"/>
+    </svg></button>`;
+  }
+  const valveBtn = (open, act, arg, key, label) => `<button class="vbtn sm ${open ? 'on' : 'off'}" data-act="${act}" data-arg="${esc(String(arg))}" aria-label="${esc(label || 'Задвижка')}">${wheelIcon(open, key)}${label ? `<b>${esc(label)}</b>` : ''}<span class="vplate ${open ? 'po' : 'pc'}">${open ? 'ОТКРЫТО' : 'ЗАКРЫТО'}</span></button>`;
+  // мини-маховик для кнопок
+  const wheelIcon = (open, key) => `<svg viewBox="0 0 40 40" width="38" height="38" aria-hidden="true"><g class="v-wheel ${valveMem['b' + key] != null && valveMem['b' + key] !== open ? (open ? 'spin-open' : 'spin-close') : ''}" style="transform-origin:20px 20px">${(valveMem['b' + key] = open, '')}<circle cx="20" cy="20" r="15" fill="none" stroke="#c62828" stroke-width="4.5"/>${[0, 60, 120].map(a => { const r = a * Math.PI / 180; return `<line x1="${(20 - 14 * Math.cos(r)).toFixed(1)}" y1="${(20 - 14 * Math.sin(r)).toFixed(1)}" x2="${(20 + 14 * Math.cos(r)).toFixed(1)}" y2="${(20 + 14 * Math.sin(r)).toFixed(1)}" stroke="#a51c1c" stroke-width="2.6"/>`; }).join('')}<circle cx="20" cy="20" r="4.5" fill="#8e1616"/></g></svg>`;
   function npzScheme() {
     const d = dsT(), R = npzR(), on = d.feed > 0.5, P = s.prodStock, N = s.np, Cc = s.cat;
     const dur = f => Math.max(0.6, Math.min(5, 5 / ((f || 0) / 40 + 0.25))).toFixed(2);
@@ -1034,14 +1216,14 @@
   }
   const ronName2 = () => E.ronName(s.prodQ.ron) + ' в парке';
   function npzGauges(R) {
-    const g = (value, min, max, bands, text, label) => `<div class="kpi">${G.gauge({ value, min, max, bands, text, label })}</div>`;
+    const g = (value, min, max, bands, text, label, fmt) => `<div class="kpi">${G.gauge({ value, min, max, bands, text, label, fmt })}</div>`;
     const sul = R ? R.sul : 2500;
     return `<div class="kpis gauges">
       ${g(R ? R.depth * 100 : 0, 0, 100, [{ to: 50, color: C.red }, { to: 75, color: C.yellow }, { to: 100, color: C.aqua }], R ? pct(R.depth, 1) : '—', 'Глубина переработки')}
       ${g(R ? R.light * 100 : 0, 0, 80, [{ to: 35, color: C.red }, { to: 55, color: C.yellow }, { to: 80, color: C.aqua }], R ? pct(R.light, 1) : '—', 'Выход светлых')}
       ${g(E.nelson(s), 1, 10, [{ to: 3, color: C.red }, { to: 6, color: C.yellow }, { to: 10, color: C.aqua }], num(E.nelson(s), 1), 'Индекс Нельсона')}
       ${g(R && R.out.ai > 0 ? R.ron : 70, 70, 100, [{ to: 80, color: C.red }, { to: 92, color: C.yellow }, { to: 100, color: C.aqua }], R && R.out.ai > 0 ? num(R.ron, 1) : '—', 'ОЧ бензина')}
-      ${g(Math.log10(Math.max(1, sul)), 0, 3.6, [{ to: 1, color: C.aqua }, { to: 2.55, color: C.yellow }, { to: 3.6, color: C.red }], num(sul) + ' ppm', 'Сера в ДТ')}
+      ${g(Math.log10(Math.max(1, sul)), 0, 3.6, [{ to: 1, color: C.aqua }, { to: 2.55, color: C.yellow }, { to: 3.6, color: C.red }], num(sul) + ' ppm', 'Сера в ДТ', v => { const x = Math.pow(10, v); return x >= 1000 ? String(Math.round(x / 100) * 100) : x >= 100 ? String(Math.round(x / 10) * 10) : String(Math.round(x)); })}
       ${g(R ? R.saltOut : 0, 0, 15, [{ to: 3, color: C.aqua }, { to: 6, color: C.yellow }, { to: 15, color: C.red }], R ? num(R.saltOut, 1) + ' мг/л' : '—', 'Соли после ЭЛОУ')}
     </div>`;
   }
@@ -1096,7 +1278,7 @@
           ${R && R.gas > 0 ? `<div class="kv3"><div><span>ОЧ пула</span><b class="${R.ron >= 92 ? 'tgood' : 'tbad'}">${num(R.ron, 1)}</b></div><div><span>АИ-98 / 95 / 92</span><b>${num(R.out.a98, 1)} / ${num(R.out.a95, 1)} / ${num(R.out.ai, 1)} т</b></div><div><span>ОЧ остатка АИ-92</span><b class="${R.r92 >= 92 ? 'tgood' : 'tbad'}">${num(R.r92, 1)}</b></div></div>
           ${R.out.a98 < R.gas * N.g98 / 100 - 0.01 || R.out.a95 < R.gas * N.g95 / 100 - 0.01 ? '<p class="hint twarn">Октана не хватает на план — поднимите температуру риформинга</p>' : ''}` : '<p class="hint">Нужен риформинг: без него бензина нет.</p>'}
           <p class="hint">АИ-98 и АИ-95 дороже, но требуют высокого ОЧ пула.</p>`)}
-        ${card('Задвижки отгрузки', `<div class="valves">${[['gas', 'Бензин'], ['dt', 'Дизель'], ['mz', 'Мазут'], ['bit', 'Битум']].map(([k, n]) => { const o = k === 'bit' ? N.bit : N.v[k] !== false; return `<button class="vbtn ${o ? 'on' : 'off'}" data-act="valve" data-arg="${k}"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M2 5 L12 12 L2 19Z M22 5 L12 12 L22 19Z" fill="currentColor"/></svg><b>${n}</b><small>${o ? 'открыта' : 'закрыта'}</small></button>`; }).join('')}</div>
+        ${card('Задвижки отгрузки', `<div class="valves">${[['gas', 'Бензин'], ['dt', 'Дизель'], ['mz', 'Мазут'], ['bit', 'Битум']].map(([k, n]) => { const o = k === 'bit' ? N.bit : N.v[k] !== false; return `<button class="vbtn ${o ? 'on' : 'off'}" data-act="valve" data-arg="${k}">${wheelIcon(o, k)}<b>${n}</b><span class="vplate ${o ? 'po' : 'pc'}">${o ? 'ОТКРЫТО' : 'ЗАКРЫТО'}</span></button>`; }).join('')}</div>
           <p class="hint">Закрытая задвижка — продукт копится в парке. Битум: закрыто — гудрон уходит в мазут.</p>`)}
         ${card('Прогноз при этом режиме', R ? `<div class="kv3"><div><span>Бензин 92/95/98</span><b>${num(R.gas, 1)} т · ОЧ ${R.gas > 0 ? num(R.ron, 1) : '—'}</b></div><div><span>Дизель</span><b>${num(R.out.dt, 1)} т · ${E.sulClass(R.sul)}</b></div><div><span>Мазут</span><b>${num(R.out.mz, 1)} т</b></div>
           <div><span>Глубина</span><b>${pct(R.depth, 1)}</b></div><div><span>Соли</span><b class="${R.saltOut <= 3 ? 'tgood' : 'tbad'}">${num(R.saltOut, 1)} мг/л</b></div><div><span>Маржа</span><b class="${mg.diff >= 0 ? 'tgood' : 'tbad'}">${num(mg.diff)} ₸/т</b></div></div>` : '<p class="hint">Постройте НПЗ</p>')}
@@ -1111,7 +1293,7 @@
         <div class="gwells">${NPZ_LIST().map(u => { const B = D.BUILD[u], f = E.facs(s, u)[0], req = B.req && !has(B.req);
           const cat = u === 'npz_ref' ? s.cat.rf : u === 'npz_hdo' ? s.cat.hdo : null;
           return `<div class="gwell ${f ? 'work' : ''}"><div class="w-h"><b>${G.icon('npz')} ${B.name}</b>${f ? facPill(f) : pill('нет', '')}</div>
-            <small>${B.desc}</small>
+            <small>${B.desc}</small>${f && (f.status !== 'ok' || f.regen > 0) ? G.danger('НЕ ВКЛЮЧАТЬ! РАБОТАЮТ ЛЮДИ', f.regen > 0 ? 'регенерация катализатора' : f.status === 'fail' ? 'авария' : 'ремонт') : ''}
             <div class="kv3"><div><span>Мощность</span><b>${num(B.cap)} т/сут</b></div><div><span>Загрузка</span><b>${f ? pct(uLoad(R, u)) : '—'}</b></div><div><span>Нельсон</span><b>×${E.NELSON[u]}</b></div></div>
             ${f ? `${bar(f.health / 100, f.health < 40 ? 'bad' : f.health < 65 ? 'warn' : 'good')}<small>износ ${Math.round(100 - f.health)}%${f.health < 25 ? ' — риск аварии' : ''}${cat != null ? ` · катализатор ${pct(cat)}` : ''}</small>` : ''}
             <div class="btnrow">${f ? (cat != null ? btn(`Регенерация · ${money((u === 'npz_ref' ? 30e6 : 25e6) * idx())}`, 'npzRegen', f.id, 'small', f.regen > 0 || f.status !== 'ok') : '') + fixBtns(f) : btn(`Построить · ${money(B.cost * idx())}`, 'tender', u, 'small primary', req)}${req ? `<small>нужен ${D.BUILD[B.req].name}</small>` : ''}</div></div>`; }).join('')}</div>`;
@@ -1149,6 +1331,7 @@
       }
   /* ===================== АЗС ===================== */
   const RK = ['ai', 'a95', 'a98', 'dt'], RN = { ai: 'АИ-92', a95: 'АИ-95', a98: 'АИ-98', dt: 'ДТ' };
+  const PCOL = { ai: '#2e8b57', a95: '#1f7f9a', a98: '#6d4bb3', dt: '#c98a14' };
   const DENS = { ai: 0.745, a95: 0.75, a98: 0.755, dt: 0.84 };
   function azsPic(f) {
     const st = f.st || {}, cars = f.status === 'ok' ? Math.min(6, Math.round((st.served || 0) / 40)) : 0;
@@ -1157,7 +1340,7 @@
     const pumps = Array.from({ length: f.trk }, (_, i) => { const x = f.trk === 1 ? 140 : 70 + i * (160 / (f.trk - 1)); return `<rect x="${x - 5}" y="64" width="10" height="20" rx="2" fill="#2f4a73"/><rect x="${x - 3}" y="67" width="6" height="4" fill="#7fd1ff"/>`; }).join('');
     const car = (col, d) => `<g class="car" style="animation-delay:${d}s"><rect x="-30" y="77" width="24" height="8" rx="3" fill="${col}"/><rect x="-26" y="72" width="13" height="6" rx="2" fill="#9fb6c9"/><circle cx="-25" cy="86" r="2.6" fill="#111"/><circle cx="-11" cy="86" r="2.6" fill="#111"/></g>`;
     const cols = ['#e6edf3', '#d84a3a', '#3987e5', '#c98500', '#3fbf6f', '#9b7be0'];
-    return `<svg class="azspic big" viewBox="0 0 320 150" aria-hidden="true">
+    return `<svg class="azspic big" viewBox="0 0 320 110" aria-hidden="true">
       <rect x="40" y="30" width="200" height="12" rx="2" fill="${f.status === 'ok' ? '#d84a3a' : '#56687a'}"/><text x="140" y="39.5" text-anchor="middle" font-size="8" font-weight="800" fill="#fff">${brand}</text>
       <rect x="48" y="42" width="5" height="44" fill="#56687a"/><rect x="227" y="42" width="5" height="44" fill="#56687a"/>
       ${pumps}
@@ -1167,8 +1350,6 @@
       ${Array.from({ length: cars }, (_, i) => car(cols[i % cols.length], i * 1.1)).join('')}
       ${f.status === 'service' ? '<text x="140" y="60" text-anchor="middle" font-size="11" font-weight="800" fill="#e6a23c">РЕМОНТ</text>' : ''}
       ${(st.queue || 0) > 1 ? `<text x="6" y="104" font-size="8" fill="#e66767">очередь ~${num(st.queue)} маш.</text>` : ''}
-      <rect x="0" y="110" width="320" height="40" fill="#141d27"/>
-      ${RK.map((k, i) => `<g transform="translate(${6 + i * 78},118)"><rect width="72" height="22" rx="11" fill="#1f2b38" stroke="#3a4a5a"/><rect x="2" y="2" width="${(68 * lv(k)).toFixed(1)}" height="18" rx="9" fill="${FCOL[k]}" opacity=".85"/><text x="36" y="15" text-anchor="middle" font-size="7.5" font-weight="700" fill="#fff">${RN[k]} ${pct(lv(k))}</text></g>`).join('')}
       ${(st.deliv || 0) > 0 ? '<g class="truck"><rect x="250" y="94" width="34" height="11" rx="3" fill="#c98500"/><rect x="284" y="96" width="12" height="9" rx="2" fill="#e6edf3"/></g>' : ''}
     </svg>`;
   }
@@ -1249,14 +1430,14 @@
         const days = k => st.served > 0 && mx[k] > 0 ? f.tk[k] / (st.served * mx[k]) : null;
         const eM = m && m.days ? azsE(m) : 0;
         return `<div class="gwell ${f.status === 'ok' ? 'work' : 'fail'}"><div class="w-h"><b>${G.icon('azs')} ${esc(f.name)}</b>${f.status !== 'ok' ? facPill(f) : pill(st.queue > 1 ? 'очередь' : st.dry > 0.1 ? 'нет топлива' : 'работает', st.queue > 1 || st.dry > 0.1 ? 'warn' : 'good')}</div>
-          ${azsPic(f)}
+          ${azsPic(f)}${f.status !== 'ok' ? G.danger('НЕ ВКЛЮЧАТЬ! РАБОТАЮТ ЛЮДИ', 'АЗС закрыта на ремонт') : ''}
           <div class="kv3"><div><span>Машин/сут</span><b>${num(st.served)}</b></div><div><span>Литров/сут</span><b>${num(st.l)}</b></div><div><span>Налив</span><b>${num(T.l)} л</b></div>
             <div><span>Загрузка ТРК</span><b class="t${tone(-(st.cars / (f.trk * 110)), -0.85, -1)}">${pct(Math.min(1.5, st.cars / (f.trk * 110)))}</b></div><div><span>Выручка/сут</span><b>${money(st.rev + st.shop)}</b></div><div><span>EBITDA/сут</span><b class="t${tone(st.ebitda || 0, 1, 0)}">${money(st.ebitda || 0)}</b></div></div>
-          <div class="fuelrow">${RK.map(k => { const dd = days(k); return `<span class="${dd == null ? '' : dd < 2 ? 'tbad' : dd < 4 ? 'twarn' : 'tgood'}">${RN[k]}: ${dd == null ? '—' : num(dd, 1) + ' сут'}</span>`; }).join('')}</div>
+          <div class="pumps">${RK.map(k => { const dd = days(k), l = st.l && f.fin ? (st.lk ? st.lk[k] : null) : null; return G.fuelPump({ label: RN[k], color: PCOL[k], liters: (st.lk || {})[k] || 0, level: f.tk[k] / f.tkCap[k], price: num(E.perLitre(s, k, E.retailPrice(s, k)), 1) + ' ₸/л', on: ((st.lk || {})[k] || 0) > 0, dry: f.tk[k] < 0.05 && f.status === 'ok' && mx[k] > 0, sub: dd == null ? 'запас —' : 'запас ' + num(dd, 1) + ' сут', daysCls: dd == null ? '' : dd < 2 ? 'tbad' : dd < 4 ? 'twarn' : 'tgood' }); }).join('')}</div>
           <div class="kv3"><div><span>Выручка месяца</span><b>${money(m ? m.rev + m.shop : 0)}</b></div><div><span>EBITDA месяца</span><b class="t${tone(eM, 1, 0)}">${money(eM)}</b></div><div><span>Рентабельность</span><b class="t${tone(m && m.rev ? eM / m.rev : 0, 0.06, 0.02)}">${m && m.rev ? pct(eM / m.rev, 1) : '—'}</b></div></div>
           ${bar(f.health / 100, f.health < 40 ? 'bad' : f.health < 65 ? 'warn' : 'good')}<small>износ ${Math.round(100 - f.health)}%${f.health < 50 ? ' — клиенты уходят' : ''} · колонок ${f.trk} · резервуары ${num(RK.reduce((a, k) => a + f.tkCap[k], 0))} т</small>
           <div class="btnrow">${fixBtns(f)}</div>
-          <div class="btnrow">${f.trk < 8 ? btn('+2 колонки · ' + money(10e6 * idx()), 'azsUp', f.id + ':trk', 'small') : ''}${!f.cafe ? btn('Кафе · ' + money(20e6 * idx()), 'azsUp', f.id + ':cafe', 'small') : ''}${!f.wash ? btn('Мойка · ' + money(30e6 * idx()), 'azsUp', f.id + ':wash', 'small') : ''}${f.tkCap.dt < 80 ? btn('Резервуары ×2 · ' + money(15e6 * idx()), 'azsUp', f.id + ':tank', 'small') : ''}</div></div>`; }).join('')}</div>`;
+          <div class="btnrow">${!f.lpg ? btn('Газовая колонка · ' + money(18e6 * idx()), 'azsUp', f.id + ':lpg', 'small') : ''}${f.trk < 8 ? btn('+2 колонки · ' + money(10e6 * idx()), 'azsUp', f.id + ':trk', 'small') : ''}${!f.cafe ? btn('Кафе · ' + money(20e6 * idx()), 'azsUp', f.id + ':cafe', 'small') : ''}${!f.wash ? btn('Мойка · ' + money(30e6 * idx()), 'azsUp', f.id + ':wash', 'small') : ''}${f.tkCap.dt < 80 ? btn('Резервуары ×2 · ' + money(15e6 * idx()), 'azsUp', f.id + ':tank', 'small') : ''}</div></div>`; }).join('')}</div>`;
     }
     const F = s.azsFin || {}, eM = F.days ? azsE(F) : 0;
     return `<div class="kpis">
@@ -1269,12 +1450,13 @@
         ${kpiTile('Потери', num(d.queue) + ' маш.', d.dry > 0.1 ? `нет топлива: ${num(d.dry, 1)} т` : 'очереди у колонок', d.queue > 1 || d.dry > 0.1 ? 'warn' : 'good')}
         ${kpiTile('Износ сети', pct(1 - avgH(['azs']) / 100), 'средний', avgH(['azs']) < 50 ? 'bad' : avgH(['azs']) < 70 ? 'warn' : 'good')}
       </div>
+      ${all.length ? card('Колонки сети за сутки', `<div class="pumps">${RK.map(k => { const tk = sum(all, f => f.tk[k] || 0), cp = sum(all, f => f.tkCap[k] || 0), dl = d.azs[k] > 0 ? tk / d.azs[k] : null; return G.fuelPump({ label: RN[k], color: PCOL[k], liters: d.azs[k] / DENS[k] * 1000, level: cp ? tk / cp : 0, price: num(E.perLitre(s, k, E.retailPrice(s, k)), 1) + ' ₸/л', on: d.azs[k] > 0, dry: cp > 0 && tk < 0.05, sub: dl == null ? 'запас —' : 'запас ' + num(dl, 1) + ' сут', daysCls: dl == null ? '' : dl < 2 ? 'tbad' : dl < 4 ? 'twarn' : 'tgood' }); }).join('')}</div>`) : ''}
       ${card('Логистика топлива (онлайн)', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap">${azsLogistics()}</div>`)}
       <div class="grid2">
         ${card('Бензовозы', `<p class="hint" style="margin-top:0">Свой бензовоз — 44 т/сут за ${money(20000 * idx())} в день. Наём — ${money(2500 * idx())} за тонну.</p>
-          <div class="btnrow">${btn('Купить · ' + money(25e6 * idx()), 'trucks', s.ds.trucks + 1, 'primary')}${s.ds.trucks > 0 ? btn('Продать один', 'trucks', s.ds.trucks - 1) : ''}</div>
+          <div class="btnrow">${btn('Купить · ' + money(25e6 * idx()), 'trucks', s.ds.trucks + 1)}${s.ds.trucks > 0 ? btn('Продать один', 'trucks', s.ds.trucks - 1) : ''}</div>
           <label class="check"><input type="checkbox" data-change="autofix" ${s.ds.autoFix ? 'checked' : ''}> Авторемонт АЗС и НПЗ при износе выше 60%</label>`)}
-        ${card('Построить АЗС', `${Object.entries(D.AZS_LOC).map(([k, L]) => { const T = E.AZS_TRAF[k]; return `<div class="prow"><span>${L.name[0].toUpperCase() + L.name.slice(1)} — ~${T.cars} машин/сут, налив ${T.l} л, дизель ${pct(T.dt)}</span><div class="btnrow">${btn(money(D.BUILD.azs.cost * L.cost * idx()), 'tender', 'azs:' + k, k === 'road' ? 'small primary' : 'small')}</div></div>`; }).join('')}`)}
+        ${card('Построить АЗС', `${Object.entries(D.AZS_LOC).map(([k, L]) => { const T = E.AZS_TRAF[k]; return `<div class="prow"><span>${L.name[0].toUpperCase() + L.name.slice(1)} — ~${T.cars} машин/сут, налив ${T.l} л, дизель ${pct(T.dt)}</span><div class="btnrow">${btn(money(D.BUILD.azs.cost * L.cost * idx()), 'tender', 'azs:' + k, 'small')}</div></div>`; }).join('')}`)}
       </div>`;
   }
   /* ===================== Акции ===================== */
@@ -1322,7 +1504,8 @@
   /* ===================== ЦДПиТГ — цех добычи, подготовки и транспортировки газа ===================== */
   const tq = v => num((v || 0) / 1000, 1) + ' тыс.';
   const GW_ST = { work: ['в работе', 'good'], idle: ['консервация', ''], prep: ['расконсервация', 'warn'], repair: ['ремонт', 'warn'], fail: ['авария', 'bad'], stop: ['остановлена', 'warn'] };
-  const gasT = () => (s.today && s.today.gas) || { prod: 0, heat: 0, gtes: 0, sale: 0, flare: 0, util: 1, nat: 0, natSale: 0, gtesN: 0, boiler: 0, dew: null, norm: -20, ok: true, load: 0 };
+  // показатели газа за сутки; поля, которых нет в старых сохранениях, — по умолчанию
+  const gasT = () => Object.assign({ prod: 0, heat: 0, gtes: 0, sale: 0, flare: 0, util: 1, nat: 0, natSale: 0, gtesN: 0, boiler: 0, dew: null, norm: E.dewNorm(s), ok: true, load: 0 }, (s.today && s.today.gas) || {});
   function cdpitgScheme() {
     const g = gasT(), t = s.today || {};
     const hasU = E.facs(s, 'uppg').length > 0, hasC = E.facs(s, 'gascomp').length > 0, hasG = E.facs(s, 'gtes').length > 0;
@@ -1365,12 +1548,48 @@
       ${lbl(1039, 512, 'Факел', 'ns')}
     </svg>`;
   }
+  /* ---------- СУГ: ёмкости, поставки на АЗС, опт ---------- */
+  function vLpg() {
+    const L = s.lpg || { st: 0, sell: true, res: 5, toAzs: true, hist: [] }, d = (s.today && s.today.lpg) || {}, cap = E.lpgCap(s), i = idx();
+    const st = E.facs(s, 'azs'), withG = st.filter(f => f.lpg), g = gasT();
+    const hasSrc = E.facs(s, 'gfu').length || E.facs(s, 'npz_fcc').length;
+    const inD = (d.gfu || 0) + (d.npz || 0);
+    const kp = `<div class="kpis">
+      ${kpiTile('Запас СУГ', `${num(L.st, 1)} / ${num(cap)} т`, cap ? pct(L.st / cap) + ' ёмкостей' : 'нет ёмкостей', cap && L.st / cap > 0.9 ? 'bad' : '')}
+      ${kpiTile('Получено за сутки', num(inD, 1) + ' т', `ГФУ ${num(d.gfu || 0, 1)} · НПЗ ${num(d.npz || 0, 1)}`, inD > 0 ? 'good' : '')}
+      ${kpiTile('На АЗС', num((d.azsL || 0)) + ' л', `продано автогаза · ${money(d.azsRev || 0)}`, d.azsL > 0 ? 'good' : '')}
+      ${kpiTile('В опт', num(d.sold || 0, 1) + ' т', d.sold ? money(d.soldRev) : L.sell ? 'сверх резерва' : 'отгрузка закрыта', d.sold > 0 ? 'good' : '')}
+    </div>`;
+    const tank = G.lpgTank({ id: 'main', level: cap ? L.st / cap : 0, text: `${num(L.st, 1)} т из ${num(cap)} т`, sub: d.lost > 0 ? `переполнение: ${num(d.lost, 1)} т на факел` : 'парк ёмкостей СУГ' });
+    const flows = `<div class="tscroll"><table class="tbl"><tbody>
+      <tr><td>ГФУ: переработано ПНГ</td><td>${num((g.gfuIn || 0) / 1000, 1)} тыс. м³</td></tr>
+      <tr><td>Получено СУГ с ГФУ</td><td>${num(d.gfu || 0, 2)} т</td></tr>
+      <tr><td>Получено СУГ с НПЗ (каткрекинг)</td><td>${num(d.npz || 0, 2)} т</td></tr>
+      <tr><td>Вывезено газовозами на АЗС</td><td>${num(d.toAzs || 0, 2)} т${d.bought ? ` + покупной ${num(d.bought, 2)} т` : ''}</td></tr>
+      <tr><td>Отгружено в опт</td><td>${num(d.sold || 0, 2)} т</td></tr>
+      ${d.lost ? `<tr><td class="tbad">Сожжено на факеле (переполнение)</td><td class="tbad">${num(d.lost, 2)} т</td></tr>` : ''}
+    </tbody></table></div>`;
+    const ctrl = `<div class="vrow">${valveBtn(L.toAzs !== false, 'lpgValve', 'azs', 'lpgazs', 'На АЗС')}<small>Газовозы вывозят СУГ на станции с газовой колонкой, когда газа в резервуаре станции меньше половины. Доставка ${num(1500 * i)} ₸/т.</small></div>
+      <div class="vrow">${valveBtn(L.sell, 'lpgValve', 'sell', 'lpgsell', 'В опт')}<small>Всё сверх резерва для АЗС уходит в ж/д цистерны по оптовой цене. Закрыто — СУГ копится в ёмкостях, при переполнении сжигается на факеле.</small></div>
+      <div class="slider"><label>Резерв СУГ для АЗС: <b>${L.res} сут</b></label><input type="range" min="0" max="30" step="1" value="${L.res}" data-change="lpgRes"></div>
+      <div class="kv3"><div><span>Опт</span><b>${money(E.lpgWholesale(s))}/т</b></div><div><span>Колонка</span><b>${num(E.lpgRetailL(s), 1)} ₸/л</b></div><div><span>Спрос АЗС</span><b>${num(d.dem || 0, 2)} т/сут</b></div></div>`;
+    const stations = st.length ? `<div class="gwells">${st.map(f => { const lv = f.lpg ? (f.tk.lpg || 0) / (f.tkCap.lpg || 1) : 0, ls = f.lpgSt || {};
+      return `<div class="gwell ${f.lpg ? (ls.dry > 0.01 ? 'fail' : 'work') : ''}"><div class="w-h"><b>${esc(f.name)}</b>${f.lpg ? pill(ls.dry > 0.01 ? 'газа нет' : 'газ есть', ls.dry > 0.01 ? 'bad' : 'good') : pill('без газа', '')}</div>
+        ${f.lpg ? `${G.lpgTank({ id: 'z' + f.id, level: lv, small: true, text: `${num(f.tk.lpg || 0, 1)} / ${num(f.tkCap.lpg)} т` })}<small>продано за сутки: ${num(ls.l || 0)} л · ${money(ls.rev || 0)}</small>` : `<small>Газовая колонка: ~${Math.round(14)}% машин ездят на газу. Резервуар СУГ 10 т.</small><div class="btnrow">${btn('Газовая колонка · ' + money(18e6 * i), 'azsUp', f.id + ':lpg', 'small')}</div>`}</div>`; }).join('')}</div>` : '<p class="hint">Своих АЗС нет — весь СУГ уходит в опт.</p>';
+    const hist = (L.hist || []).slice(-12);
+    return `${kp}<div class="grid2">${card('Парк ёмкостей СУГ', tank + flows)}${card('Направление СУГ', ctrl)}</div>
+      ${card('Газовые колонки АЗС', stations + `<p class="hint">Станции с колонкой продают автогаз (пропан-бутан). Нет своего газа — при включённой закупке на АЗС газ покупается по рынку +5%.</p>`)}
+      ${hist.length ? card('СУГ по месяцам', `<div class="tscroll"><table class="tbl"><thead><tr><th>Месяц</th><th>Получено, т</th><th>АЗС, т</th><th>Опт, т</th><th>Факел, т</th></tr></thead><tbody>${hist.slice().reverse().map(h => `<tr><td>${ymRu(h.m)}</td><td>${num(h.prod, 1)}</td><td>${num(h.azs, 1)}</td><td>${num(h.sold, 1)}</td><td class="${h.lost > 0 ? 'tbad' : ''}">${num(h.lost, 1)}</td></tr>`).join('')}</tbody></table></div>`) : ''}
+      ${card('Источники и хранение', `<p>${hasSrc ? '' : 'Пока нет источника СУГ. '}ГФУ извлекает пропан-бутан из попутного газа (≈0,28 кг с м³) и снижает сжигание на факеле. Каткрекинг НПЗ тоже даёт СУГ.</p>
+        <div class="btnrow">${btn('ГФУ · ' + money(D.BUILD.gfu.cost * i), 'tender', 'gfu', 'small')}${btn('Ёмкости СУГ +100 т · ' + money(D.BUILD.lpg_tank.cost * i), 'tender', 'lpg_tank', 'small')}</div>`)}`;
+  }
   function vGasTab() {
     const sb = sub();
     if (sb === 'uppg') return vUppg();
     if (sb === 'mks') return vGas();
     if (sb === 'gwells') return vGwells();
     if (sb === 'balance') return vGasBal();
+    if (sb === 'lpg') return vLpg();
     const g = gasT(); const hasU = E.facs(s, 'uppg').length > 0;
     const rev = (g.natSale * E.GAS_PRICE_N * (g.ok ? 1 : 0.7) + g.sale * E.GAS_PRICE_P) * idx();
     return `${card('Схема ЦДПиТГ (онлайн)', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap big">${cdpitgScheme()}</div>
@@ -1415,7 +1634,7 @@
       const st = GW_ST[w.status] || [w.status, ''];
       const acts = w.status === 'idle' ? btn('Расконсервировать · ' + money(12e6 * idx()), 'gwell', w.id + ':open', 'small primary', !hasU)
         : w.status === 'fail' ? btn('Ремонт · ' + money(6e6 * idx()), 'gwell', w.id + ':repair', 'small primary')
-        : w.status === 'work' ? btn('Остановить', 'gwell', w.id + ':stop', 'small') : w.status === 'stop' ? btn('Пустить', 'gwell', w.id + ':start', 'small') : `<small>${w.down} сут</small>`;
+        : w.status === 'work' ? valveBtn(true, 'gwell', w.id + ':stop', 'g' + w.id, 'Устье') : w.status === 'stop' ? valveBtn(false, 'gwell', w.id + ':start', 'g' + w.id, 'Устье') : `<small>${w.down} сут</small>`;
       return `<div class="gwell ${w.status}"><div class="w-h"><b>${G.icon('gas')} ${esc(w.name)}</b>${pill(st[0], st[1])}</div>
         <div class="kv3"><div><span>Дебит</span><b>${tq(w.today)} м³</b></div><div><span>Потенциал</span><b>${tq(E.gwellPot(s, w))} м³</b></div><div><span>Накоплено</span><b>${num(w.cum / 1e6, 1)} млн м³</b></div></div>
         ${bar(w.health / 100)}<small>износ ${Math.round(100 - w.health)}%${w.failName && w.status === 'fail' ? ' · ' + esc(w.failName) : ''}</small><div class="btnrow">${acts}</div></div>`;
@@ -1511,6 +1730,8 @@
       <div class="btnrow">${btn('Экспорт в файл', 'export', '', 'primary')}${btn('Импорт из файла', 'import')}<input type="file" id="importFile" accept=".json,application/json" hidden></div>
       <p class="hint">Размер: ${num((m.size || 0) / 1024)} КБ. Safari и иконка «Домой» хранят сохранения отдельно.</p>`);
   }
+  function animMode() { return LS.get('om2_anim') || 'on'; }
+  function applyAnim() { let off = animMode() === 'off'; if (animMode() === 'sys') { try { off = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { } } document.documentElement.classList.toggle('no-anim', off); }
   function vSettings() {
     return `${card('Компания', `<div class="kv3"><div><span>Название</span><b>${esc(s.company.name)}</b></div><div><span>Месторождение</span><b>${esc(s.company.field)}</b></div><div><span>Сложность</span><b>${{ easy: 'Лёгкая', normal: 'Нормальная', hard: 'Сложная' }[s.company.difficulty]}</b></div></div><div class="btnrow">${btn('Изменить названия', 'renameForm')}</div>`)}
       ${savesCard()}
@@ -1518,7 +1739,9 @@
         <div class="slider"><label>Громкость: <b id="volv">${Math.round(SND.settings.vol * 100)}%</b></label><input type="range" min="0" max="100" step="5" value="${Math.round(SND.settings.vol * 100)}" data-input="vol" data-change="vol"></div>
         <label class="check"><input type="checkbox" data-change="sndAmb" ${SND.settings.amb ? 'checked' : ''}> Фоновый шум промысла (гул насосов, скрип станков-качалок)</label>
         <div class="btnrow">${btn('Проверить звук', 'sndTest', '', 'small')}</div>
-        <p class="hint">Нет звука на iPhone — выключите беззвучный режим.</p>`)}
+        <label class="check"><input type="checkbox" data-change="sndTouch" ${SND.settings.touch !== false ? 'checked' : ''}> Звуки касаний и оборудования (скрип качалки, стук по резервуару, стекло манометра)</label>
+        <label class="sub-l">Анимация оборудования</label><div class="seg seg3">${[['on', 'Всегда'], ['sys', 'Как в системе'], ['off', 'Выключить']].map(([k, n]) => btn(n, 'anim', k, animMode() === k ? 'on' : '')).join('')}</div>
+        <p class="hint">Нет звука на iPhone — выключите беззвучный режим. «Как в системе» отключает анимацию, если на телефоне включено «Уменьшение движения».</p>`)}
       ${card('Игровой процесс', `<label class="check"><input type="checkbox" data-change="repSetting" ${s.settings.monthReport !== false ? 'checked' : ''}> Показывать итоги по цехам после каждого месяца (время останавливается до решения)</label>`)}
       ${card('Помощь', `<div class="btnrow">${btn('Как играть', 'help', '', 'primary')}</div>`)}
       ${card('Новая игра', `<p class="hint">Текущий прогресс будет потерян (если не экспортирован).</p><div class="btnrow">${btn('Начать заново', 'newGame', '', 'danger')}</div>`)}
@@ -1621,7 +1844,7 @@
   }
   const ago = t => { if (!t) return 'никогда'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'только что' : m < 60 ? m + ' мин назад' : m < 1440 ? Math.round(m / 60) + ' ч назад' : Math.round(m / 1440) + ' дн. назад'; };
   function flash(text, type = 'info') { if (s) s.flash.push({ text, type }); else alert(text); }
-  const ACT_SND = { regen: 'hiss', azsUp: 'build', shares: 'cash', accept: 'cash', spot: 'cash', hire: 'pop', buy: 'spend', award: 'stamp', tech: 'good', loan: 'coin', deposit: 'coin', withdraw: 'coin', repay: 'spend', maintain: 'hiss', repair: 'hiss', planCustom: 'stamp', cancelContract: 'leave', cancelProject: 'leave', fire: 'leave', salaryAll: 'coin', tankPurpose: 'hiss', demolish: 'build' };
+  const ACT_SND = { menu: 'stamp', fixfac: 'clank', regen: 'hiss', azsUp: 'build', shares: 'cash', accept: 'cash', spot: 'cash', hire: 'pop', buy: 'spend', award: 'stamp', tech: 'good', loan: 'coin', deposit: 'coin', withdraw: 'coin', repay: 'spend', maintain: 'hiss', repair: 'hiss', planCustom: 'stamp', cancelContract: 'leave', cancelProject: 'leave', fire: 'leave', salaryAll: 'coin', tankPurpose: 'hiss', demolish: 'build' };
   const OP_SND = { bonus: 'coin', remark: 'warn', reprimand: 'fail', fire: 'leave', hire: 'pop', grade: 'good', train: 'good', search: 'click' };
   function doAct(type, a, okMsg) {
     try {
@@ -1661,9 +1884,10 @@
     wf: a => { ui.wellFilter = a; ui.page = 0; render(); }, lf: a => { ui.logFilter = a; render(); }, page: a => { ui.page += Number(a); render(); },
     finRange: a => { ui.finRange = Number(a); render(); },
     gosub: a => { go(a); },
-    toggle: a => { doAct('toggle', { key: a }); render(); },
+    toggle: a => { if (doAct('toggle', { key: a }) && (a === 'dgu' || a === 'ownFuel')) SND.play('toggle'); render(); },
     repair: a => { doAct('repair', { id: a }, 'Бригада ПРС выехала на скважину'); render(); },
     repairAll: () => { let n = 0; for (const w of s.wells.filter(w => w.status === 'fail')) { try { E.act(s, 'repair', { id: w.id }); n++; } catch (e) { } } flash(n ? `Назначено ремонтов: ${n}` : 'Нет свободных бригад или материалов', n ? 'good' : 'warn'); save(); render(); },
+    ckwash: () => { doAct('ckppn', { wash: !s.ckppnSet.wash }); SND.play('valve'); render(); },
     wtoggle: a => { doAct('wellToggle', { id: a }); render(); },
     svc: a => { const [type, id] = a.split(':'); const r = doAct('tender', { type, target: Number(id) }); if (r) tenderModal(); else render(); },
     svcPick: a => {
@@ -1672,9 +1896,18 @@
       if (!ws.length) { flash('Нет подходящих скважин', 'warn'); render(); return; }
       form(D.SERVICES[a].name, 'Выберите скважину', [{ name: 'w', label: 'Скважина', type: 'select', options: ws.sort((x, y) => x.health - y.health).map(w => [w.id, `${w.name} — ${E.wellTypeName(w.type)}, потенциал ${num(w.potential, 1)}, обводн. ${pct(w.wc)}, износ ${Math.round(w.health)}%`]) }], v => { ui.modal = null; handlers.svc(`${a}:${v.w}`); return false; }, 'К тендеру');
     },
-    valve: a => { doAct('np', { valve: a }); SND.play('hiss'); render(); },
+    anim: a => { LS.set('om2_anim', a); applyAnim(); flash(a === 'off' ? 'Анимация выключена' : 'Анимация включена', 'good'); render(); },
+    veh: a => { const [op, id] = String(a).split(':'); const c = s.fleet.cars.find(x => x.id === Number(id)); if (!c) return;
+      const go = () => { if (doAct('veh', { op, id }, { chto: 'ЧТО проведено', to: 'Машина на ТО', pto: 'Техосмотр пройден', repair: 'Машина в ремонте', sell: 'Машина списана', fuel: 'Бак заправлен' }[op])) { SND.play(op === 'sell' ? 'leave' : op === 'fuel' ? 'hiss' : 'ratchet'); } render(); };
+      if (op === 'sell') confirmBox(`Списать ${c.name} (${c.plate})?`, 'Машина будет продана по остаточной стоимости.', go); else go(); },
+    vbuy: a => { const V = D.VEH[a]; confirmBox(`Купить: ${V.name}?`, money(V.cost * idx()), () => { if (doAct('veh', { op: 'buy', type: a }, 'Техника получена')) SND.play('motor'); render(); }); },
+    fleetSet: a => { doAct('veh', { op: a, on: !s.fleet[a] }); SND.play('valve'); render(); },
+    vparts: a => { doAct('buy', { key: 'vparts', qty: Number(a) }, 'Заказ оформлен'); render(); },
+    menu: a => { doAct('menu', { menu: a }, 'Меню изменено: ' + E.MENU[a].name); render(); },
+    valve: a => { doAct('np', { valve: a }); SND.play('valve'); render(); },
     fixfac: a => { const [id, kind] = String(a).split(':'); const f = s.fac.find(x => x.id === Number(id)); if (!f) return; confirmBox(`${kind === 'kr' ? 'Капитальный' : 'Текущий'} ремонт: ${f.name}?`, `${money(E.fixCost(s, f, kind))}, остановка на ${E.fixDays(f, kind)} сут.`, () => { doAct('fixfac', { id, kind }); render(); }); },
     npzRegen: a => confirmBox('Регенерация катализатора?', 'Установка остановится на 8 суток.', () => { doAct('regen', { id: a }); }),
+    lpgValve: a => { doAct('lpgSet', { valve: a }); SND.play('valve'); render(); },
     azsUp: a => { const [id, up] = String(a).split(':'); doAct('azsUp', { id, up }, 'Готово'); render(); },
     trucks: a => { doAct('ds', { trucks: Number(a) }, 'Парк бензовозов обновлён'); render(); },
     dsMode: a => { doAct('ds', { mode: a }); render(); },
@@ -1685,7 +1918,7 @@
       confirmBox(txt, '', () => { if (doAct('shares', pay, op === 'ipo' ? 'Акции размещены!' : 'Готово')) { if (op === 'ipo') { SND.play('fanfare'); confetti(); } } render(); }); },
     shBuy: a => { const c = s.companies[Number(a)]; if (!c) return; const n = Math.floor(100e6 * idx() / E.compPrice(c)); doAct('shares', { op: 'trade', name: c.name, n }, `Куплено ${num(n)} акций`); render(); },
     shSell: a => { const c = s.companies[Number(a)]; if (!c || !s.port[c.name]) return; doAct('shares', { op: 'trade', name: c.name, n: -s.port[c.name].qty }, 'Акции проданы'); render(); },
-    gwell: a => { const [id, op] = String(a).split(':'); doAct('gwell', { id, op }, { open: 'Расконсервация начата (10 сут)', repair: 'Ремонтная бригада выехала', stop: 'Скважина остановлена', start: 'Скважина пущена' }[op]); render(); },
+    gwell: a => { const [id, op] = String(a).split(':'); if (op === 'stop' || op === 'start') SND.play('valve'); doAct('gwell', { id, op }, { open: 'Расконсервация начата (10 сут)', repair: 'Ремонтная бригада выехала', stop: 'Скважина остановлена', start: 'Скважина пущена' }[op]); render(); },
     tender: a => { const [ty, pu] = String(a).split(':'); const r = doAct('tender', { type: ty, purpose: pu }); if (r) tenderModal(); else render(); },
     award: a => {
       const pur = document.getElementById('f-purpose'), cd = document.getElementById('f-cdng');
@@ -1797,6 +2030,17 @@
   document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
   window.addEventListener('pagehide', () => { if (s) { save(); saveUi(); } });
   /* ===================== события DOM ===================== */
+  // звуки касания оборудования
+  const EQ_SND = [['.valve,.vbtn', null], ['.gauge.mano', 'glass'], ['.pj', 'creak'], ['.azspic', 'beep'], ['.furn,.flame', 'fire'], ['.ecn,.impeller,.inj,.fdial', 'motor'], ['.pmeter', 'toggle'], ['svg.tank,.tank,.tankc', 'knock'], ['.scheme .node', 'clank']];
+  root.addEventListener('pointerdown', e => {
+    SND.init();
+    if (SND.settings.touch === false) return;
+    const el = e.target;
+    if (el.closest('input[type=checkbox]') || (el.tagName === 'LABEL' && el.querySelector('input[type=checkbox]'))) { SND.play('toggle'); return; }
+    for (const [sel, snd] of EQ_SND) { const hit = el.closest(sel); if (hit) { if (snd) SND.play(snd); if (snd === 'glass') { hit.classList.remove('tapped'); void hit.offsetWidth; hit.classList.add('tapped'); } if (snd === 'creak' || snd === 'clank' || snd === 'knock' || snd === 'motor') { hit.classList.remove('poke'); void hit.getBoundingClientRect(); hit.classList.add('poke'); } return; } }
+    if (!el.closest('button,[data-act],[data-tab],[data-sub],[data-go],input,select,a')) SND.play('touch');
+  }, { passive: true });
+  root.addEventListener('input', e => { if (e.target.type === 'range' && SND.settings.touch !== false) SND.play('ratchet'); }, { passive: true });
   root.addEventListener('click', e => {
     SND.init();
     const t = e.target.closest('[data-tab],[data-sub],[data-act],[data-go]'); if (!t || t.disabled) return;
@@ -1848,6 +2092,8 @@
     else if (['elT', 't1', 'tr', 'th', 'tf', 'wash'].includes(k)) { doAct('np', { [k]: el.value }); render(); }
     else if (k === 'npbit') { doAct('np', { bit: el.checked }); render(); }
     else if (k === 'g95' || k === 'g98') { doAct('np', { [k]: el.value }); render(); }
+    else if (k === 'fleetAuto' || k === 'fleetRent' || k === 'fleetFuel') { doAct('veh', { op: k === 'fleetAuto' ? 'auto' : k === 'fleetFuel' ? 'autoFuel' : 'rent', on: el.checked }); SND.play('toggle'); render(); }
+    else if (k === 'lpgRes') { doAct('lpgSet', { res: el.value }); render(); }
     else if (k === 'autofix') { doAct('ds', { autoFix: el.checked }); render(); }
     else if (k === 'res') doAct('ds', { res: el.value });
     else if (k === 'mkp') doAct('ds', { mkp: el.value });
@@ -1863,6 +2109,7 @@
     else if (k === 'pcdng') { const p = s.people.find(x => x.id === Number(el.dataset.id)); doAct('person', { id: el.dataset.id, op: 'cdng', cdng: el.value }); if (ui.modal && p) ui.modal.html = personCard(p); }
     else if (k === 'sndOn') { SND.init(); SND.setOn(el.checked); }
     else if (k === 'vol') { SND.setVol(Number(el.value) / 100); SND.play('coin'); }
+    else if (k === 'sndTouch') { SND.setTouch && SND.setTouch(el.checked); }
     else if (k === 'sndAmb') { SND.init(); SND.setAmb(el.checked); }
     else if (k === 'repSetting') { doAct('setting', { key: 'monthReport', value: el.checked }); }
     render();
@@ -1889,7 +2136,7 @@
   });
 
   /* ===================== запуск ===================== */
-  autoLoad();
+  applyAnim(); autoLoad();
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { }); } catch (e) { }
   if (s) { const m = meta(); if (s.day > 365 && (!m.exportedAt || Date.now() - m.exportedAt > 14 * 864e5) && (!m.remindAt || Date.now() - m.remindAt > 3 * 864e5)) { m.remindAt = Date.now(); setMeta(m); setTimeout(() => flash('Совет: сделайте резервный файл игры — Настройки → Экспорт в файл', 'info'), 2500); } }
   render();

@@ -103,16 +103,247 @@
   }
 
   /* ---------- Полукруглый индикатор ---------- */
+  // Винтажный манометр: шкала 270°, красная черта, стрелка с подскоком и дрожанием
+  const gaugeMem = {};
   function gauge(o) {
-    const v = Math.max(o.min, Math.min(o.max, o.value)); const t = (v - o.min) / (o.max - o.min);
-    const R = 46, cx = 60, cy = 56; const ang = Math.PI * (1 - t);
-    const arc = (a0, a1, col) => { const p = a => `${(cx + R * Math.cos(a)).toFixed(2)} ${(cy - R * Math.sin(a)).toFixed(2)}`; return `<path d="M${p(a0)}A${R} ${R} 0 0 1 ${p(a1)}" stroke="${col}" stroke-width="9" fill="none" stroke-linecap="butt"/>`; };
-    let bands = '', prev = o.min;
-    for (const b of o.bands) { bands += arc(Math.PI * (1 - (prev - o.min) / (o.max - o.min)), Math.PI * (1 - (Math.min(b.to, o.max) - o.min) / (o.max - o.min)), b.color); prev = b.to; }
-    const nx = cx + (R - 4) * Math.cos(ang), ny = cy - (R - 4) * Math.sin(ang);
-    return `<div class="gauge"><svg viewBox="0 0 120 70" width="100%"><g opacity=".9">${bands}</g><line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="var(--text)" stroke-width="2.5" stroke-linecap="round" class="needle"/><circle cx="${cx}" cy="${cy}" r="4" fill="var(--text)"/></svg><div class="gv">${esc(o.text)}</div><div class="gl">${esc(o.label)}</div></div>`;
+    const span = o.max - o.min || 1, raw = (o.value - o.min) / span;
+    const t = Math.max(-0.02, Math.min(1.03, raw));
+    const cx = 70, cy = 70, A0 = -135, SW = 270;
+    const ang = A0 + SW * Math.max(0, Math.min(1, t)) + (raw > 1 ? 4 : raw < 0 ? -3 : 0);
+    const key = o.id || o.label || 'g';
+    const from = gaugeMem[key] != null ? gaugeMem[key] : A0 - 3; gaugeMem[key] = ang;
+    const P = (deg, r) => { const a = deg * Math.PI / 180; return [(cx + r * Math.sin(a)).toFixed(2), (cy - r * Math.cos(a)).toFixed(2)]; };
+    const arc = (d0, d1, r, col, w) => { const [x0, y0] = P(d0, r), [x1, y1] = P(d1, r); return `<path d="M${x0} ${y0}A${r} ${r} 0 ${d1 - d0 > 180 ? 1 : 0} 1 ${x1} ${y1}" stroke="${col}" stroke-width="${w}" fill="none"/>`; };
+    const kind = c => { c = String(c).toLowerCase(); return /e66767|b71c1c|bad|d84a3a|red/.test(c) ? 'r' : /c98500|d8c13a|yellow|warn|e6a23c|d95926|orange/.test(c) ? 'y' : 'g'; };
+    let bands = '', prev = o.min, redStart = null, zone = 'g';
+    for (const b of o.bands || []) {
+      const d0 = A0 + SW * Math.max(0, (prev - o.min) / span), d1 = A0 + SW * Math.min(1, (Math.min(b.to, o.max) - o.min) / span), k = kind(b.color);
+      if (d1 > d0) bands += k === 'r' ? arc(d0, d1, 44, '#b3261e', 7) : k === 'y' ? arc(d0, d1, 44, '#c98a14', 5) : arc(d0, d1, 45.5, '#3f7d3a', 2.5);
+      if (k === 'r' && redStart == null && d0 > A0 + 1) redStart = d0;
+      if (o.value >= prev && o.value <= b.to) zone = k;
+      prev = b.to;
+    }
+    if (o.value > prev) zone = kind((o.bands || []).slice(-1)[0] ? o.bands.slice(-1)[0].color : '');
+    let ticks = '', nums = '';
+    for (let i = 0; i <= 25; i++) { const d = A0 + SW * i / 25, maj = i % 5 === 0; const [x0, y0] = P(d, maj ? 39 : 42), [x1, y1] = P(d, 48); ticks += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#1d1a14" stroke-width="${maj ? 1.6 : 0.7}"/>`; }
+    for (let i = 0; i <= 5; i++) {
+      const v = o.min + span * i / 5, [x, y] = P(A0 + SW * i / 5, 31);
+      const tx = o.fmt ? o.fmt(v) : Math.abs(span) >= 50 ? short(v) : Math.abs(span) >= 5 ? String(Math.round(v)) : (Math.round(v * 10) / 10).toString().replace('.', ',');
+      nums += `<text x="${x}" y="${(+y + 3).toFixed(2)}" text-anchor="middle" font-size="${tx.length > 4 ? 6.5 : 8}" font-weight="700" fill="#1d1a14" font-family="Georgia,'Times New Roman',serif">${esc(tx)}</text>`;
+    }
+    const red = redStart != null ? (() => { const [x0, y0] = P(redStart, 36), [x1, y1] = P(redStart, 50); return `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#c62828" stroke-width="2.6"/>`; })() : '';
+    const uid = 'mg' + Math.random().toString(36).slice(2, 8);
+    return `<div class="gauge mano ${zone === 'r' ? 'danger' : zone === 'y' ? 'caution' : ''}"><svg viewBox="0 0 140 140" width="100%" aria-label="${esc(o.label)}: ${esc(o.text)}" role="img">
+      <defs>
+        <radialGradient id="${uid}f" cx="50%" cy="42%" r="62%"><stop offset="0" stop-color="#f6efd9"/><stop offset=".75" stop-color="#e6d9b4"/><stop offset="1" stop-color="#c9b88c"/></radialGradient>
+        <linearGradient id="${uid}b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f2f4f6"/><stop offset=".35" stop-color="#9aa3ab"/><stop offset=".6" stop-color="#d9dde1"/><stop offset="1" stop-color="#5b636b"/></linearGradient>
+        <linearGradient id="${uid}g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+      </defs>
+      <rect x="62" y="122" width="16" height="16" rx="2" fill="#8d7a4a" stroke="#5b4d2b"/><rect x="58" y="118" width="24" height="7" rx="1.5" fill="#b59a5a" stroke="#5b4d2b"/>
+      <circle cx="${cx}" cy="${cy}" r="62" fill="#1b1f24"/>
+      <circle cx="${cx}" cy="${cy}" r="60" fill="url(#${uid}b)"/>
+      <circle cx="${cx}" cy="${cy}" r="53.5" fill="#3b3f44"/>
+      <circle cx="${cx}" cy="${cy}" r="52" fill="url(#${uid}f)"/>
+      ${bands}${ticks}${nums}${red}
+      <text x="${cx}" y="${cy + 34}" text-anchor="middle" font-size="5.2" letter-spacing=".8" fill="#4a4232" font-family="Georgia,serif">МАНОМЕТР</text>
+      <text x="${cx}" y="${cy + 41}" text-anchor="middle" font-size="4.4" fill="#5a5040" font-family="Georgia,serif">кл. 1,5 ★</text>
+      <circle class="mlamp" cx="${cx}" cy="${cy - 17}" r="3" fill="${zone === 'r' ? '#e53935' : '#5a1d1a'}" stroke="#2a2420" stroke-width=".8"/>
+      <circle cx="${P(A0 - 6, 44)[0]}" cy="${P(A0 - 6, 44)[1]}" r="1.6" fill="#3a332a"/>
+      <g class="ndl-s" style="--a0:${from.toFixed(1)}deg;--a1:${ang.toFixed(1)}deg;transform-origin:${cx}px ${cy}px"><g class="ndl-j" style="transform-origin:${cx}px ${cy}px">
+        <path d="M${cx - 1.8} ${cy + 12} L${cx - 1.1} ${cy} L${cx - 0.35} ${cy - 45} L${cx + 0.35} ${cy - 45} L${cx + 1.1} ${cy} L${cx + 1.8} ${cy + 12}Z" fill="#141414"/>
+        <circle cx="${cx}" cy="${cy + 10}" r="3.2" fill="#141414"/></g></g>
+      <circle cx="${cx}" cy="${cy}" r="5" fill="#b59a5a" stroke="#5b4d2b" stroke-width="1"/><circle cx="${cx}" cy="${cy}" r="1.6" fill="#5b4d2b"/>
+      <ellipse cx="${cx - 12}" cy="${cy - 26}" rx="34" ry="18" transform="rotate(-25 ${cx - 12} ${cy - 26})" fill="url(#${uid}g)" opacity=".55"/>
+      <circle cx="${cx}" cy="${cy}" r="52" fill="none" stroke="rgba(0,0,0,.35)" stroke-width="2"/>
+    </svg><div class="gv">${esc(o.text)}</div><div class="gl">${esc(o.label)}</div></div>`;
   }
 
+
+  /* ---------- Щитовой стрелочный прибор КПД (бакелитовый корпус, СССР) ---------- */
+  function panelMeter(o) {
+    const v = Math.max(0, Math.min(1.2, o.value || 0)), cx = 70, cy = 92, R = 62, A0 = -50, SW = 100;
+    const ang = A0 + SW * v / 1.2, key = 'pm' + (o.id || o.label || '');
+    const from = gaugeMem[key] != null ? gaugeMem[key] : A0 - 3; gaugeMem[key] = ang;
+    const P = (deg, r) => { const a = deg * Math.PI / 180; return [(cx + r * Math.sin(a)).toFixed(2), (cy - r * Math.cos(a)).toFixed(2)]; };
+    const arc = (d0, d1, r, col, w) => { const [x0, y0] = P(d0, r), [x1, y1] = P(d1, r); return `<path d="M${x0} ${y0}A${r} ${r} 0 0 1 ${x1} ${y1}" stroke="${col}" stroke-width="${w}" fill="none"/>`; };
+    let ticks = '', nums = '';
+    for (let i = 0; i <= 24; i++) { const d = A0 + SW * i / 24, maj = i % 4 === 0; const [x0, y0] = P(d, R - (maj ? 9 : 5)), [x1, y1] = P(d, R); ticks += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#1d1a14" stroke-width="${maj ? 1.4 : 0.6}"/>`; }
+    for (let i = 0; i <= 6; i++) { const [x, y] = P(A0 + SW * i / 6, R - 16); nums += `<text x="${x}" y="${(+y + 3).toFixed(1)}" text-anchor="middle" font-size="7.5" font-weight="700" fill="#1d1a14" font-family="Georgia,serif">${i * 20}</text>`; }
+    const zone = v < 0.6 ? 'r' : v < 0.85 ? 'y' : 'g', uid = 'pm' + Math.random().toString(36).slice(2, 8);
+    return `<div class="pmeter ${zone === 'r' ? 'danger' : ''}"><svg viewBox="0 0 140 108" width="100%" role="img" aria-label="${esc(o.label)}: ${Math.round(v * 100)}%">
+      <defs><linearGradient id="${uid}b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a2c22"/><stop offset="1" stop-color="#16100c"/></linearGradient>
+      <linearGradient id="${uid}f" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6efd9"/><stop offset="1" stop-color="#ddd0a8"/></linearGradient></defs>
+      <rect x="1" y="1" width="138" height="106" rx="7" fill="url(#${uid}b)" stroke="#0b0806"/>
+      ${[[8, 8], [132, 8], [8, 100], [132, 100]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.6" fill="#8d969e" stroke="#2a2f34"/><line x1="${x - 1.6}" y1="${y}" x2="${x + 1.6}" y2="${y}" stroke="#2a2f34" stroke-width=".8"/>`).join('')}
+      <rect x="14" y="10" width="112" height="86" rx="3" fill="url(#${uid}f)" stroke="#0b0806" stroke-width="1.5"/>
+      ${arc(A0, A0 + SW * 0.5, R + 3, '#b3261e', 4)}${arc(A0 + SW * 0.5, A0 + SW * 0.708, R + 3, '#c98a14', 4)}${arc(A0 + SW * 0.708, A0 + SW, R + 3, '#3f7d3a', 4)}
+      ${ticks}${nums}
+      <text x="${cx}" y="${cy - 26}" text-anchor="middle" font-size="9" font-weight="800" fill="#1d1a14" font-family="Georgia,serif">КПД %</text>
+      <text x="${cx}" y="${cy - 16}" text-anchor="middle" font-size="4.6" fill="#5a5040" font-family="Georgia,serif">кл. 2,5 ⊥</text>
+      <g class="ndl-s" style="--a0:${from.toFixed(1)}deg;--a1:${ang.toFixed(1)}deg;transform-origin:${cx}px ${cy}px"><g class="ndl-j" style="transform-origin:${cx}px ${cy}px">
+        <line x1="${cx}" y1="${cy}" x2="${cx}" y2="${cy - R + 2}" stroke="#111" stroke-width="1.3"/><path d="M${cx - 2} ${cy - R + 12} L${cx} ${cy - R + 1} L${cx + 2} ${cy - R + 12}Z" fill="#111"/></g></g>
+      <rect x="14" y="${cy - 6}" width="112" height="10" fill="#2a2018"/>
+      <circle cx="${cx}" cy="${cy - 1}" r="4" fill="#111" stroke="#555"/>
+      <circle cx="${cx + 42}" cy="${cy - 1}" r="2.6" fill="${zone === 'r' ? '#e53935' : zone === 'y' ? '#ffb300' : '#43a047'}" stroke="#000" stroke-width=".6"/>
+      <rect x="14" y="10" width="112" height="40" rx="3" fill="#fff" opacity=".08"/>
+    </svg><div class="gl">${esc(o.label)}</div>${o.sub ? `<div class="gs">${esc(o.sub)}</div>` : ''}</div>`;
+  }
+  /* ---------- Ёмкость СУГ (горизонтальная цистерна пропан-бутана, СССР) ---------- */
+  const lpgMem = {};
+  function lpgTank(o) {
+    const lv = Math.max(0, Math.min(1, o.level || 0)), W = o.small ? 150 : 300, H = o.small ? 66 : 120, key = 'lt' + (o.id || '');
+    const from = lpgMem[key] != null ? lpgMem[key] : lv; lpgMem[key] = lv;
+    const bx = W * 0.07, bw = W * 0.86, by = H * 0.08, bh = H * 0.62, r = bh / 2, uid = 'lt' + Math.random().toString(36).slice(2, 8);
+    const ly = by + bh * (1 - lv), ly0 = by + bh * (1 - from);
+    const zone = lv > 0.85 ? '#e53935' : lv < 0.1 ? '#ffb300' : '#43a047';
+    return `<div class="lpgtank${o.small ? ' sm' : ''}"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(o.label || 'Ёмкость СУГ')}: ${Math.round(lv * 100)}%">
+      <defs><linearGradient id="${uid}b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#e6e9ec"/><stop offset="1" stop-color="#9aa3ab"/></linearGradient>
+      <linearGradient id="${uid}l" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7fb4e6" stop-opacity=".85"/><stop offset="1" stop-color="#2f6db5" stop-opacity=".9"/></linearGradient>
+      <clipPath id="${uid}c"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${r}"/></clipPath></defs>
+      ${[0.22, 0.78].map(p => `<path d="M${bx + bw * p - W * 0.06} ${by + bh + H * 0.2} L${bx + bw * p - W * 0.04} ${by + bh - 2} L${bx + bw * p + W * 0.04} ${by + bh - 2} L${bx + bw * p + W * 0.06} ${by + bh + H * 0.2}Z" fill="#5b636b" stroke="#2a2f34"/>`).join('')}
+      <rect x="${bx - W * 0.02}" y="${by + bh + H * 0.2}" width="${bw + W * 0.04}" height="${H * 0.05}" fill="#3a4148"/>
+      <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${r}" fill="url(#${uid}b)" stroke="#5b636b" stroke-width="1.2"/>
+      <g clip-path="url(#${uid}c)"><rect class="lpg-liq" x="${bx}" y="${ly.toFixed(1)}" width="${bw}" height="${(by + bh - ly + 1).toFixed(1)}" fill="url(#${uid}l)" opacity=".6" style="--y0:${(ly0 - ly).toFixed(1)}px"/>
+        <rect x="${bx}" y="${by + bh * 0.42}" width="${bw}" height="${bh * 0.16}" fill="#c62828"/></g>
+      <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${r}" fill="none" stroke="#5b636b" stroke-width="1.2"/>
+      <text x="${bx + bw * 0.42}" y="${(by + bh * 0.5 + (o.small ? 3 : 5)).toFixed(1)}" text-anchor="middle" font-size="${o.small ? 7.5 : 14}" font-weight="900" letter-spacing="${o.small ? 1 : 3}" fill="#fff" font-family="Georgia,serif">ПРОПАН</text>
+      ${o.small ? '' : `<text x="${bx + bw * 0.42}" y="${by + bh * 0.3}" text-anchor="middle" font-size="7" font-weight="700" letter-spacing="1.5" fill="#b3261e" font-family="Georgia,serif">ОГНЕОПАСНО</text>`}
+      <rect x="${bx + bw * 0.46}" y="${by - H * 0.06}" width="${W * 0.05}" height="${H * 0.07}" fill="#8d969e" stroke="#2a2f34"/>
+      <g transform="translate(${bx + bw * 0.83} ${by + bh * 0.12})"><rect x="0" y="0" width="${W * 0.045}" height="${bh * 0.76}" rx="2" fill="#1a1d20" stroke="#2a2f34"/>
+        <rect class="lpg-lvl" x="1.2" y="${(bh * 0.76 * (1 - lv) + 1).toFixed(1)}" width="${W * 0.045 - 2.4}" height="${Math.max(0, bh * 0.76 * lv - 2).toFixed(1)}" fill="${zone}"/>
+        ${[0.25, 0.5, 0.75].map(p => `<line x1="0" y1="${(bh * 0.76 * p).toFixed(1)}" x2="${(W * 0.045 * 0.5).toFixed(1)}" y2="${(bh * 0.76 * p).toFixed(1)}" stroke="#ccc" stroke-width=".6"/>`).join('')}</g>
+      ${o.small ? '' : `<text x="${bx + bw * 0.85}" y="${by + bh + H * 0.12}" font-size="7" fill="#9aa3ab" font-family="Georgia,serif">уровнемер</text>`}
+    </svg>${o.text ? `<div class="gv">${esc(o.text)}</div>` : ''}${o.sub ? `<div class="gl">${esc(o.sub)}</div>` : ''}</div>`;
+  }
+
+  /* ---------- Указатель уровня топлива (приборная панель, СССР) ---------- */
+  function fuelDial(o) {
+    const lv = Math.max(0, Math.min(1, o.level || 0)), cx = 60, cy = 62, A0 = -60, SW = 120;
+    const ang = A0 + SW * lv, key = 'fd' + (o.id || o.label || '');
+    const from = gaugeMem[key] != null ? gaugeMem[key] : A0 - 4; gaugeMem[key] = ang;
+    const P = (deg, r) => { const a = deg * Math.PI / 180; return [(cx + r * Math.sin(a)).toFixed(2), (cy - r * Math.cos(a)).toFixed(2)]; };
+    const arc = (d0, d1, r, col, w) => { const [x0, y0] = P(d0, r), [x1, y1] = P(d1, r); return `<path d="M${x0} ${y0}A${r} ${r} 0 0 1 ${x1} ${y1}" stroke="${col}" stroke-width="${w}" fill="none"/>`; };
+    let ticks = '';
+    for (let i = 0; i <= 8; i++) { const d = A0 + SW * i / 8, maj = i % 2 === 0; const [x0, y0] = P(d, maj ? 33 : 36), [x1, y1] = P(d, 41); ticks += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${i < 2 ? '#ff5a4a' : '#efe6c8'}" stroke-width="${maj ? 2 : 1}"/>`; }
+    const lab = (d, txt, r = 26) => { const [x, y] = P(d, r); return `<text x="${x}" y="${(+y + 3).toFixed(1)}" text-anchor="middle" font-size="8" font-weight="800" fill="${txt === '0' ? '#ff5a4a' : '#efe6c8'}" font-family="Georgia,serif">${txt}</text>`; };
+    const low = lv < 0.2, uid = 'fd' + Math.random().toString(36).slice(2, 8);
+    return `<div class="fdial ${low ? 'low' : ''}"><svg viewBox="0 0 120 124" width="100%" role="img" aria-label="${esc(o.label || 'Топливо')}: ${Math.round(lv * 100)}%">
+      <defs><linearGradient id="${uid}r" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eef0f2"/><stop offset=".4" stop-color="#8e979f"/><stop offset=".65" stop-color="#d5d9dd"/><stop offset="1" stop-color="#4d555c"/></linearGradient>
+      <radialGradient id="${uid}f" cx="50%" cy="35%" r="70%"><stop offset="0" stop-color="#2b2f33"/><stop offset="1" stop-color="#101214"/></radialGradient></defs>
+      <circle cx="${cx}" cy="${cy}" r="56" fill="url(#${uid}r)"/><circle cx="${cx}" cy="${cy}" r="51" fill="url(#${uid}f)"/>
+      ${arc(A0, A0 + SW * 0.25, 38, '#b3261e', 5)}${arc(A0 + SW * 0.25, A0 + SW, 39.5, '#6f6a58', 1.4)}${ticks}
+      ${lab(A0, '0')}${lab(A0 + SW / 2, '½')}${lab(A0 + SW, 'П')}
+      <g transform="translate(${cx - 5} ${cy + 14}) scale(.6)" fill="#efe6c8"><rect x="0" y="2" width="13" height="18" rx="2"/><rect x="2" y="4" width="9" height="6" fill="#16191c"/><path d="M13 7h3l3 3v9a2 2 0 0 1-4 0v-6h-2" fill="none" stroke="#efe6c8" stroke-width="1.8"/></g>
+      <text x="${cx}" y="${cy + 35}" text-anchor="middle" font-size="5.6" letter-spacing="1" fill="#bdb49a" font-family="Georgia,serif">ТОПЛИВО</text>
+      <circle class="flamp" cx="${cx + 22}" cy="${cy + 22}" r="3.4" fill="${low ? '#ffb300' : '#4a3a12'}" stroke="#000" stroke-width=".8"/>
+      <g class="ndl-s" style="--a0:${from.toFixed(1)}deg;--a1:${ang.toFixed(1)}deg;transform-origin:${cx}px ${cy}px"><g class="ndl-j" style="transform-origin:${cx}px ${cy}px">
+        <path d="M${cx - 1.6} ${cy + 6} L${cx - 0.9} ${cy} L${cx - 0.3} ${cy - 40} L${cx + 0.3} ${cy - 40} L${cx + 0.9} ${cy} L${cx + 1.6} ${cy + 6}Z" fill="#ff7a1a"/></g></g>
+      <circle cx="${cx}" cy="${cy}" r="5.5" fill="#1a1d20" stroke="#5c646b"/>
+      <ellipse cx="${cx - 14}" cy="${cy - 30}" rx="30" ry="12" transform="rotate(-20 ${cx - 14} ${cy - 30})" fill="#fff" opacity=".07"/>
+    </svg>${o.text ? `<div class="gv">${esc(o.text)}</div>` : ''}${o.sub ? `<div class="gl">${esc(o.sub)}</div>` : ''}</div>`;
+  }
+
+  /* ---------- Механический счётчик (барабаны с цифрами) ---------- */
+  const odoMem = {};
+  function odometer(value, digits, key, red) {
+    const s = String(Math.max(0, Math.round(value))).padStart(digits, '0').slice(-digits);
+    const prev = odoMem[key] || s; odoMem[key] = s;
+    return `<span class="odo" aria-label="${s}">${[...s].map((d, i) => { const f = Number(prev[i]) || 0, n = Number(d); const ch = f !== n;
+      return `<span class="od${red && i >= digits - red ? ' red' : ''}"><span class="ods${ch ? ' roll' : ''}" style="--f:${f};--n:${n}">${'0123456789'.split('').map(x => `<i>${x}</i>`).join('')}</span></span>`; }).join('')}</span>`;
+  }
+  /* ---------- Шильдик оборудования ---------- */
+  const PLANTS = ['Завод «Нефтемаш-2»', 'Уральский машзавод № 7', 'Завод «Гидромаш»', 'Каспийский завод нефтеаппаратуры', 'Завод «Красный буровик»', 'Завод «Электропривод»', 'Завод «Химаппарат-4»'];
+  function plate() { return ''; }
+  /* ---------- Предупреждающий плакат ---------- */
+  function danger(text, sub) { return `<div class="dplate"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2 L23 21 H1Z" fill="#ffd400" stroke="#111" stroke-width="1.4"/><path d="M13 7 L9 14 H12 L11 19 L15 11 H12Z" fill="#111"/></svg><div><b>${esc(text)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</div></div>`; }
+  /* ---------- Спиртовой термометр (мораль коллектива) ---------- */
+  const thermoMem = {};
+  function thermo(o) {
+    const span = o.max - o.min || 1, t = Math.max(0, Math.min(1, (o.value - o.min) / span));
+    const key = o.id || o.label || 'th', f = thermoMem[key] != null ? thermoMem[key] : 0; thermoMem[key] = t;
+    const top = 14, bot = 104, H = bot - top, y = v => bot - H * v;
+    const kind = c => /e66767|red/.test(String(c)) ? '#c62828' : /c98500|yellow/.test(String(c)) ? '#d49a1a' : '#3f8a46';
+    let prev = o.min, bands = '', zone = 'g';
+    for (const b of o.bands || []) { const a = (prev - o.min) / span, z = (Math.min(b.to, o.max) - o.min) / span; bands += `<rect x="44" y="${y(z).toFixed(1)}" width="4" height="${(H * (z - a)).toFixed(1)}" fill="${kind(b.color)}"/>`; if (o.value >= prev && o.value <= b.to) zone = kind(b.color) === '#c62828' ? 'r' : kind(b.color) === '#d49a1a' ? 'y' : 'g'; prev = b.to; }
+    let ticks = ''; for (let i = 0; i <= 10; i++) { const yy = y(i / 10).toFixed(1); ticks += `<line x1="${i % 5 ? 50 : 49}" y1="${yy}" x2="${i % 5 ? 55 : 58}" y2="${yy}" stroke="#2a2418" stroke-width="${i % 5 ? .7 : 1.2}"/>`; if (i % 5 === 0) ticks += `<text x="60" y="${(+yy + 3).toFixed(1)}" font-size="8" font-weight="700" fill="#2a2418" font-family="Georgia,serif">${Math.round(o.min + span * i / 10)}</text>`; }
+    return `<div class="gauge thermo ${zone === 'r' ? 'danger' : zone === 'y' ? 'caution' : ''}"><svg viewBox="0 0 90 132" width="100%" role="img" aria-label="${esc(o.label)}: ${esc(o.text)}">
+      <rect x="18" y="4" width="54" height="124" rx="6" fill="#e9dfc2" stroke="#8a7a52"/><rect x="21" y="7" width="48" height="118" rx="4" fill="none" stroke="#c9b88c"/>
+      <circle cx="26" cy="11" r="1.6" fill="#8a7a52"/><circle cx="64" cy="11" r="1.6" fill="#8a7a52"/><circle cx="26" cy="121" r="1.6" fill="#8a7a52"/><circle cx="64" cy="121" r="1.6" fill="#8a7a52"/>
+      ${bands}${ticks}
+      <rect x="35" y="${top - 6}" width="8" height="${H + 8}" rx="4" fill="#f7f4ec" stroke="#9c9480"/>
+      <rect class="th-liq" x="37" y="${y(t).toFixed(1)}" width="4" height="${(bot - y(t) + 2).toFixed(1)}" fill="#d32f2f" style="--h0:${(H * f).toFixed(1)}px;--h1:${(H * t).toFixed(1)}px;transform-origin:39px ${bot}px"/>
+      <circle cx="39" cy="${bot + 8}" r="7" fill="#d32f2f" stroke="#9c9480"/><circle cx="37" cy="${bot + 6}" r="2" fill="#ff8a80" opacity=".8"/>
+      <rect x="36" y="${top - 4}" width="1.5" height="${H}" fill="#fff" opacity=".6"/>
+    </svg><div class="gv">${esc(o.text)}</div><div class="gl">${esc(o.label)}</div></div>`;
+  }
+  /* ---------- Сигнальная колонна (светофор безопасности) ---------- */
+  function signal(o) {
+    const span = o.max - o.min || 1;
+    let prev = o.min, zone = 'g';
+    for (const b of o.bands || []) { const c = String(b.color); if (o.value >= prev && o.value <= b.to) zone = /e66767|red/.test(c) ? 'r' : /c98500|yellow/.test(c) ? 'y' : 'g'; prev = b.to; }
+    const lamp = (cy, k, on, col, dim) => `<g class="sl-l ${on ? 'on' : ''} ${on && k === 'r' ? 'blink' : ''}"><circle cx="45" cy="${cy}" r="13" fill="#15181b" stroke="#000"/><circle cx="45" cy="${cy}" r="10.5" fill="${on ? col : dim}"/>${on ? `<circle cx="45" cy="${cy}" r="15" fill="${col}" opacity=".25"/><circle cx="41" cy="${cy - 4}" r="3" fill="#fff" opacity=".6"/>` : ''}<path d="M30 ${cy - 13} h30 l-3 -5 h-24z" fill="#2a2f34"/></g>`;
+    const segs = Array.from({ length: 10 }, (_, i) => { const v = o.min + span * (i + 0.5) / 10, lit = o.value >= o.min + span * i / 10 + 0.0001; const c = v < (o.bands[0] || {}).to ? '#e53935' : v < (o.bands[1] || {}).to ? '#f2b705' : '#43a047'; return `<rect x="${12 + i * 7}" y="122" width="5" height="8" rx="1" fill="${lit ? c : '#2b3036'}"/>`; }).join('');
+    return `<div class="gauge signal ${zone === 'r' ? 'danger' : zone === 'y' ? 'caution' : ''}"><svg viewBox="0 0 90 136" width="100%" role="img" aria-label="${esc(o.label)}: ${esc(o.text)}">
+      <rect x="27" y="4" width="36" height="104" rx="6" fill="#3a4047" stroke="#111"/><rect x="30" y="7" width="30" height="98" rx="4" fill="#23282d"/>
+      ${lamp(24, 'r', zone === 'r', '#ff3b30', '#4a1513')}${lamp(55, 'y', zone === 'y', '#ffc107', '#4a3a10')}${lamp(86, 'g', zone === 'g', '#4cd964', '#123a1c')}
+      <rect x="40" y="108" width="10" height="8" fill="#555c63"/><rect x="8" y="116" width="74" height="18" rx="3" fill="#1c2024" stroke="#000"/>${segs}
+    </svg><div class="gv">${esc(o.text)}</div><div class="gl">${esc(o.label)}</div></div>`;
+  }
+  /* ---------- Табло «Работаем без травм» ---------- */
+  function safetyBoard(days, sub) {
+    return `<div class="sboard"><div class="sb-h">★ ОХРАНА ТРУДА ★</div><div class="sb-t">РАБОТАЕМ БЕЗ ТРАВМ</div>${odometer(days, 4, 'notrauma')}<div class="sb-t">ДНЕЙ</div>${sub ? `<div class="sb-s">${esc(sub)}</div>` : ''}</div>`;
+  }
+  /* ---------- Линейная шкала с бегунком (план, доверие) ---------- */
+  const linMem = {};
+  function linear(o) {
+    const span = o.max - o.min || 1, pos = v => Math.max(0, Math.min(100, (v - o.min) / span * 100));
+    const p = pos(o.value), key = o.id || o.label || 'lin', f = linMem[key] != null ? linMem[key] : 0; linMem[key] = p;
+    const kind = c => /e66767|red/.test(String(c)) ? 'r' : /c98500|yellow/.test(String(c)) ? 'y' : 'g';
+    let prev = o.min, zones = '', zone = 'g';
+    for (const b of o.bands || []) { const a = pos(prev), z = pos(Math.min(b.to, o.max)); zones += `<i class="z-${kind(b.color)}" style="left:${a}%;width:${z - a}%"></i>`; if (o.value >= prev && o.value <= b.to) zone = kind(b.color); prev = b.to; }
+    if (o.value > prev && o.bands && o.bands.length) zone = kind(o.bands[o.bands.length - 1].color);
+    const ticks = (o.ticks || [o.min, (o.min + o.max) / 2, o.max]).map(v => `<span style="left:${pos(v)}%">${esc(String(Math.round(v)))}${o.unit || ''}</span>`).join('');
+    const mark = o.marker != null ? `<b class="lin-mark" style="left:${pos(o.marker)}%"></b>` : '';
+    return `<div class="lin z${zone}"><div class="lin-top"><span class="lin-l">${esc(o.label)}</span><span class="lin-v">${esc(o.text)}</span></div>
+      <div class="lin-track">${zones}${mark}<em class="lin-ptr" style="--p0:${f.toFixed(1)}%;--p1:${p.toFixed(1)}%"></em></div><div class="lin-ticks">${ticks}</div>${o.sub ? `<div class="lin-s">${esc(o.sub)}</div>` : ''}</div>`;
+  }
+  /* ---------- Настроение коллектива (лицо) ---------- */
+  function moodFace(o) {
+    const v = Math.max(0, Math.min(100, o.value)), zone = v < 40 ? 'r' : v < 60 ? 'y' : 'g';
+    const col = { r: '#e66767', y: '#e6a23c', g: '#3fbf6f' }[zone];
+    const c = (v - 50) / 50 * 14; // изгиб рта
+    const brow = v < 40 ? `<path d="M30 36 L42 40 M70 36 L58 40" stroke="#1b1f24" stroke-width="3" stroke-linecap="round"/>` : '';
+    return `<div class="gauge moodf ${zone === 'r' ? 'danger' : zone === 'y' ? 'caution' : ''}"><svg viewBox="0 0 100 100" width="100%" role="img" aria-label="${esc(o.label)}: ${esc(o.text)}">
+      <circle cx="50" cy="50" r="44" fill="${col}" stroke="#1b1f24" stroke-width="3"/>
+      <circle cx="50" cy="50" r="44" fill="url(#none)" opacity=".15"/>
+      ${brow}<g class="mf-eyes"><ellipse cx="36" cy="44" rx="5" ry="6.5" fill="#1b1f24"/><ellipse cx="64" cy="44" rx="5" ry="6.5" fill="#1b1f24"/></g>
+      <path d="M30 ${68 - c / 2} Q50 ${68 + c} 70 ${68 - c / 2}" fill="none" stroke="#1b1f24" stroke-width="4" stroke-linecap="round"/>
+      <ellipse cx="34" cy="28" rx="12" ry="6" fill="#fff" opacity=".22" transform="rotate(-25 34 28)"/>
+    </svg><div class="gv">${esc(o.text)}</div><div class="gl">${esc(o.label)}</div></div>`;
+  }
+  /* ---------- Советская топливораздаточная колонка ---------- */
+  function fuelPump(o) {
+    const col = o.color || '#3fbf6f', lv = Math.max(0, Math.min(1, o.level || 0)), state = o.dry ? 'dry' : o.on ? 'on' : 'off';
+    const lamp = state === 'dry' ? '#ff3b30' : state === 'on' ? '#4cd964' : '#5b636b';
+    const L = String(Math.round(o.liters || 0)).padStart(5, '0').slice(-5);
+    return `<div class="fpump ${state}"><svg viewBox="0 0 64 128" width="100%" role="img" aria-label="${esc(o.label)}: ${esc(L)} л">
+      <rect x="6" y="116" width="52" height="8" rx="2" fill="#2b3036"/>
+      <rect x="10" y="22" width="40" height="96" rx="5" fill="${col}" stroke="#14181c" stroke-width="1.5"/>
+      <rect x="10" y="22" width="40" height="96" rx="5" fill="url(#none)"/><rect x="13" y="24" width="6" height="92" fill="#fff" opacity=".12"/>
+      <rect x="12" y="6" width="36" height="18" rx="8" fill="#f2efe6" stroke="#14181c" stroke-width="1.5"/>
+      <text x="30" y="19" text-anchor="middle" font-size="9" font-weight="900" fill="#1c1c1c" font-family="Georgia,serif">${esc(o.label)}</text>
+      <rect x="14" y="30" width="32" height="30" rx="2" fill="#e9e2c8" stroke="#14181c"/>
+      <rect x="16" y="33" width="28" height="10" fill="#111"/><text x="30" y="41" text-anchor="middle" font-size="8" font-weight="700" fill="#f2efe6" font-family="Courier New,monospace" letter-spacing=".5">${esc(L)}</text>
+      <text x="30" y="49" text-anchor="middle" font-size="4.6" fill="#333" font-family="Arial">ЛИТРЫ ЗА СУТКИ</text>
+      <text x="30" y="57" text-anchor="middle" font-size="6.5" font-weight="700" fill="#7a1a1a" font-family="Georgia,serif">${esc(o.price || '')}</text>
+      <circle class="fp-lamp" cx="20" cy="68" r="3.2" fill="${lamp}" stroke="#111"/>
+      <rect x="36" y="64" width="8" height="46" rx="2" fill="#0d1114" stroke="#14181c"/>
+      <rect x="37.5" y="${(65.5 + 43 * (1 - lv)).toFixed(1)}" width="5" height="${(43 * lv).toFixed(1)}" fill="${lv < 0.2 ? '#e53935' : '#e8d58a'}" opacity=".9"/>
+      ${[0.25, 0.5, 0.75].map(k => `<line x1="36" x2="38" y1="${(65.5 + 43 * k).toFixed(1)}" y2="${(65.5 + 43 * k).toFixed(1)}" stroke="#ccc" stroke-width=".6"/>`).join('')}
+      <path d="M10 76 C-2 78 0 104 8 110" fill="none" stroke="#1c1c1c" stroke-width="2.6"/>
+      <path d="M10 70 h5 v12 h-5z" fill="#3a3f45"/><path d="M5 108 l6 -4 l2 3 l-6 4z" fill="#3a3f45"/>
+    </svg><div class="fp-s ${o.daysCls || ''}">${esc(o.sub || '')}</div></div>`;
+  }
   /* ---------- Мини-спарклайн ---------- */
   function spark(values, color = C.blue, w = 90, h = 26) {
     const v = values.filter(x => x != null); if (v.length < 2) return '';
@@ -205,6 +436,8 @@
       fin: 'M4 20V10M10 20V4M16 20v-8M22 20H2', rating: 'M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM17 6h3v2a3 3 0 0 1-3 3M7 6H4v2a3 3 0 0 0 3 3', tech: 'M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3',
       events: 'M12 8v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', gas: 'M12 3c1 3 4 5 4 9a4 4 0 0 1-8 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 0-8zM5 21h14', bank: 'M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18', hse: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4', kpi: 'M4 19V5M4 19h16M7 15l4-5 3 3 5-7', settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3 15H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 9 4.6V4a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.6 1.6 0 0 0 19.4 9H20a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z',
       npz: 'M6 21V7l2-3 2 3v14M14 21V10h4v11M3 21h18M6 11h4M6 15h4M14 14h4', azs: 'M4 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 21h12M6 8h6M14 10h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V8l-3-3', shares: 'M4 20h16M7 16V9M7 9V6M12 16v-5M12 11V4M17 16v-3M17 13v-4M5.5 9h3v5h-3zM10.5 6h3v8h-3zM15.5 9h3v5h-3z',
+      dorm: 'M3 21V9l9-6 9 6v12M3 21h18M8 21v-5h3v5M14 12h3v3h-3zM7 11h3v3H7z',
+      truck: 'M2 16V6h11v10M13 9h5l3 4v3h-8M2 16h2M9 16h6M6.5 18.5a2 2 0 1 0 0-.1M17.5 18.5a2 2 0 1 0 0-.1',
       more: 'M4 6h16M4 12h16M4 18h16', play: 'M7 4l13 8-13 8z', close: 'M6 6l12 12M18 6L6 18', drop: 'M12 3s7 7.5 7 12a7 7 0 0 1-14 0c0-4.5 7-12 7-12z', warn: 'M12 3l10 18H2zM12 10v5M12 18v.5', ok: 'M4 12l5 5L20 6', up: 'M6 15l6-6 6 6', down: 'M6 9l6 6 6-6'
     };
     return `<svg class="ic" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${P[name] || P.more}"/></svg>`;
@@ -259,5 +492,5 @@
           ${helmet}</g></g></g></g></svg>`;
   }
 
-  root.OMCharts = { face, C, line, bars, donut, gauge, spark, pumpjack, ecnHead, injHead, tank, furnace, icon, short, esc };
+  root.OMCharts = { lpgTank, panelMeter, fuelDial, fuelPump, linear, moodFace, thermo, signal, safetyBoard, odometer, plate, danger, face, C, line, bars, donut, gauge, spark, pumpjack, ecnHead, injHead, tank, furnace, icon, short, esc };
 })(typeof window !== 'undefined' ? window : globalThis);
