@@ -524,3 +524,26 @@ html,body{position:fixed;inset:0;width:100%;height:100%;overflow:hidden;overscro
 @media (min-width:1024px){.gwells{grid-template-columns:repeat(3,1fr)}}
 .bottom button span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 1px;font-size:10px;letter-spacing:-.1px}
 .grid2>*,.grid3>*{min-width:0}
+/* НПЗ, АЗС, акции */
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.tog{display:flex;align-items:center;gap:8px;margin:10px 0;font-size:14px}.tog input{width:20px;height:20px;accent-color:var(--accent)}
+.seg.seg3{display:flex;width:100%;margin:6px 0 12px}.seg.seg3 button{flex:1}
+.azspic{width:100%;max-width:240px;height:auto;display:block;margin:2px auto 6px}
+.azspic .car{animation:carIn 6s ease-in-out infinite}
+@keyframes carIn{0%{transform:translateX(-30px)}25%,70%{transform:translateX(47px)}100%{transform:translateX(140px)}}
+.scheme .bubble{animation:bub 1.8s linear infinite}
+@keyframes bub{0%{transform:translateY(0);opacity:0}20%{opacity:1}100%{transform:translateY(-250px);opacity:0}}
+@media (prefers-reduced-motion:reduce){.azspic .car,.scheme .bubble{animation:none}}
+.tankc small{display:block;color:var(--muted);font-size:12px}
+.sub-l{display:block;font-size:13px;color:var(--muted);margin:6px 0 0}
+.prow{padding:8px 0;border-bottom:1px solid var(--line)}.prow:last-child{border-bottom:none}.prow>span{display:block;font-weight:600;margin-bottom:6px}.prow .btnrow{margin:0}
+.azspic.big{max-width:420px}
+.azspic .truck{animation:truckIn 5s ease-in-out infinite}
+@keyframes truckIn{0%{transform:translateX(60px);opacity:0}20%,80%{transform:translateX(0);opacity:1}100%{transform:translateX(60px);opacity:0}}
+.ubar{display:grid;grid-template-columns:120px 1fr 48px;align-items:center;gap:8px;margin:6px 0;font-size:13px}.ubar b{text-align:right}.ubar small{color:var(--muted)}
+.slider.dis{opacity:.45}
+.kpis.gauges .kpi{padding:6px}
+@media (prefers-reduced-motion:reduce){.azspic .truck{animation:none}}
+.azspic.big .car{animation:carIn2 7s ease-in-out infinite}
+@keyframes carIn2{0%{transform:translateX(0)}30%,65%{transform:translateX(150px)}100%{transform:translateX(380px)}}
+@media (prefers-reduced-motion:reduce){.azspic.big .car{animation:none;transform:translateX(150px)}}

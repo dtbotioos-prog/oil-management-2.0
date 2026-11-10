@@ -20,12 +20,14 @@
     { key: 'mts',   name: 'Кладовщик / снабженец МТС',    dept: 'mts',   salary: 55000,  need: a => 1 + Math.floor(a.staff / 100) },
     { key: 'drv',   name: 'Водитель спецтехники',         dept: 'trans', salary: 58000,  need: a => Math.max(2, Math.ceil(a.wells / 10)) },
     { key: 'aup',   name: 'Экономист / бухгалтер (АУП)',  dept: 'aup',   salary: 100000, need: a => 2 + Math.floor(a.staff / 50) },
+    { key: 'npzop', name: 'Оператор технологических установок НПЗ', dept: 'npz', salary: 85000, need: a => a.npz * 12 + a.npzUnits * 5 },
+    { key: 'azsop', name: 'Оператор АЗС', dept: 'retail', salary: 55000, need: a => a.azsStaff },
     { key: 'gasop', name: 'Оператор по добыче и подготовке газа', dept: 'gas', salary: 72000, need: a => a.uppg + a.mks + a.gwellsOn > 0 ? 1 + a.uppg * 3 + a.mks * 2 + Math.ceil(a.gwellsOn / 5) : 1 }
   ];
   const DEPTS = {
     cdng: 'ЦДНГ — добыча', prs: 'Бригады ПРС', ckppn: 'ЦКППН — подготовка', ppd: 'ЦППД — закачка',
     energy: 'Энергослужба', repair: 'ПРЦЭО — ремонт', hse: 'Служба ОТ и ПБ', geo: 'ЦНИПР — геология',
-    mts: 'Склад МТС', trans: 'Транспорт', aup: 'Аппарат управления', gas: 'ЦДПиТГ — газ'
+    mts: 'Склад МТС', trans: 'Транспорт', aup: 'Аппарат управления', gas: 'ЦДПиТГ — газ', npz: 'НПЗ', retail: 'Розница (АЗС)'
   };
 
   /* ---------- Материалы склада ---------- */
@@ -66,6 +68,15 @@
     ses:      { name: 'Солнечная станция 1 МВт',      cat: 'power', cost: 280e6, days: 50, kw: 0,  icon: 'ses', cap: 1000, tech: 'ses', desc: 'Средняя выдача ~25% от пиковой. Бесплатная энергия.' },
     gascomp:  { name: 'МКС — компрессорная ПНГ',      cat: 'build', cost: 320e6, days: 55, kw: 180, icon: 'gas', cap: 25000, desc: 'Сжимает попутный газ 0,2 → 0,9 МПа и подаёт в газопровод: до 25 000 м³/сут.' },
     uppg:     { name: 'УППГ — подготовка газа',       cat: 'build', cost: 480e6, days: 80, kw: 90,  icon: 'gas', cap: 300000, desc: 'Осушка природного газа: сепарация, охлаждение, ДЭГ. До 300 тыс. м³/сут, 22 скважины.' },
+    npz:      { name: 'Мини-НПЗ (ЭЛОУ-АТ)',           cat: 'build', cost: 1.8e9, days: 150, kw: 500, icon: 'npz', cap: 400, desc: 'Обессоливание и атмосферная перегонка 400 т/сут. Парк продуктов 8 000 т.' },
+    npz_vac:  { name: 'Вакуумный блок (ВТ)',          cat: 'build', cost: 0.6e9, days: 90,  kw: 180, icon: 'npz', cap: 230, req: 'npz', desc: 'Делит мазут на вакуумный газойль и гудрон — сырьё для крекинга и битума.' },
+    npz_ref:  { name: 'Каталитический риформинг',     cat: 'build', cost: 0.8e9, days: 110, kw: 250, icon: 'npz', cap: 90,  req: 'npz', desc: 'Нафта → высокооктановый бензин и водород. До 90 т/сут.' },
+    npz_hdo:  { name: 'Гидроочистка дизеля',          cat: 'build', cost: 0.7e9, days: 100, kw: 220, icon: 'npz', cap: 160, req: 'npz', desc: 'Удаляет серу из дизеля до класса К5. До 160 т/сут.' },
+    npz_fcc:  { name: 'Каталитический крекинг',       cat: 'build', cost: 1.6e9, days: 160, kw: 400, icon: 'npz', cap: 110, req: 'npz_vac', desc: 'Вакуумный газойль → бензин, сжиженный газ, лёгкий газойль. До 110 т/сут.' },
+    npz_bit:  { name: 'Битумная установка',           cat: 'build', cost: 0.35e9, days: 60, kw: 90,  icon: 'npz', cap: 70,  req: 'npz_vac', desc: 'Гудрон → дорожный битум. Летом дорого, зимой дёшево.' },
+    npz_rvs:  { name: 'РВС НПЗ 3 000 т',              cat: 'build', cost: 140e6, days: 40,  kw: 3,   icon: 'ckppn', need: 'npz', ptank: 3000, desc: 'Резервуар для бензина, дизеля или мазута: +3 000 т.' },
+    npz_rvs10:{ name: 'РВС НПЗ 10 000 т',             cat: 'build', cost: 380e6, days: 70,  kw: 6,   icon: 'ckppn', need: 'npz', ptank: 10000, desc: 'Большой резервуар продуктов: +10 000 т.' },
+    azs:      { name: 'АЗС',                          cat: 'build', cost: 60e6,  days: 45,  kw: 15,  icon: 'azs', desc: 'Розница бензина и дизеля. Место влияет на продажи.' },
     well_gas: { name: 'Газовая скважина',             cat: 'drill', cost: 130e6, days: 40, kw: 0,   icon: 'gas', desc: 'Природный газ 25–55 тыс. м³/сут. Работает только через УППГ.' },
     cdng:     { name: 'Новый цех добычи (ЦДНГ)',       cat: 'build', cost: 80e6,  days: 30, kw: 20, icon: 'cdng', cap: 40, desc: 'Открывает новый ЦДНГ — до 40 скважин на цех.' }
   };
@@ -194,5 +205,8 @@
   };
   const AUTHORITIES = { eco: 'Департамент экологии', prom: 'Комитет промышленной безопасности', labor: 'Инспекция труда', fire: 'Государственный пожарный надзор' };
 
-  root.OMData = { DEPOSITS, DRILLS, AUTHORITIES, FIRST_M, FIRST_F, LAST, PENSION, CHIEF_FIRST, CHIEF_LAST, CHIEF_SALARY, ROLES, DEPTS, MATERIALS, BUILD, TANK_PURPOSE, SERVICES, CONTRACTORS, TECH, BRENT, FX, CHANNELS, BUYERS, NAME_A, NAME_B, FIELD_NAMES, GOALS };
+  // место АЗС: стоимость и спрос
+  const AZS_LOC = { city: { name: 'город', cost: 1.6, d: 1.4 }, road: { name: 'трасса', cost: 1, d: 1, summer: 1.15 }, village: { name: 'посёлок', cost: 0.6, d: 0.55 } };
+  const EXCHANGE = 'Центрально-Азиатская фондовая биржа';
+  root.OMData = { AZS_LOC, EXCHANGE, DEPOSITS, DRILLS, AUTHORITIES, FIRST_M, FIRST_F, LAST, PENSION, CHIEF_FIRST, CHIEF_LAST, CHIEF_SALARY, ROLES, DEPTS, MATERIALS, BUILD, TANK_PURPOSE, SERVICES, CONTRACTORS, TECH, BRENT, FX, CHANNELS, BUYERS, NAME_A, NAME_B, FIELD_NAMES, GOALS };
 })(typeof window !== 'undefined' ? window : globalThis);

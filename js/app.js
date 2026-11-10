@@ -27,7 +27,7 @@
 
   /* ===================== навигация ===================== */
   const NAV = [
-    ['home', 'Сводка', 'home'], ['prod', 'Добыча', 'prod'], ['ckppn', 'Подготовка', 'ckppn'], ['gas', 'ЦДПиТГ', 'gas'], ['sales', 'Сбыт', 'sales'], ['staff', 'Персонал', 'staff'],
+    ['home', 'Сводка', 'home'], ['prod', 'Добыча', 'prod'], ['ckppn', 'Подготовка', 'ckppn'], ['gas', 'ЦДПиТГ', 'gas'], ['sales', 'Сбыт', 'sales'], ['npz', 'НПЗ', 'npz'], ['azs', 'АЗС', 'azs'], ['shares', 'Акции', 'shares'], ['staff', 'Персонал', 'staff'],
     ['build', 'Подряд и стройка', 'build'], ['stock', 'Склад', 'stock'], ['energy', 'Энергетика', 'energy'], ['hse', 'ОТ, ПБ и экология', 'hse'], ['fin', 'Финансы', 'fin'], ['bank', 'Банк', 'bank'], ['kpi', 'Аналитика', 'kpi'],
     ['rating', 'ТОП-100', 'rating'], ['tech', 'Технологии', 'tech'], ['events', 'Журнал', 'events'], ['settings', 'Настройки', 'settings']
   ];
@@ -35,6 +35,9 @@
     prod: [['cdng', 'Цеха: план / факт'], ['wells', 'Скважины'], ['res', 'Пласт и ППД']],
     ckppn: [['scheme', 'Схема'], ['mode', 'Режим подготовки'], ['tanks', 'Резервуары'], ['equip', 'Оборудование']],
     gas: [['scheme', 'Схема'], ['uppg', 'УППГ'], ['mks', 'МКС и ПНГ'], ['gwells', 'Скважины'], ['balance', 'Баланс']],
+    npz: [['scheme', 'Схема'], ['kpi', 'Показатели'], ['mode', 'Режим'], ['units', 'Установки'], ['prod', 'Продукты']],
+    azs: [['net', 'Сеть'], ['st', 'Станции'], ['price', 'Цены']],
+    shares: [['my', 'Наши акции'], ['market', 'Биржа']],
     sales: [['contracts', 'Договоры'], ['offers', 'Предложения'], ['market', 'Рынок']],
     build: [['catalog', 'Объекты'], ['services', 'Услуги'], ['projects', 'Проекты']],
     fin: [['pnl', 'Прибыль и убытки'], ['ledger', 'Журнал операций']],
@@ -80,6 +83,14 @@
       if (g && g.nat > 0 && !g.ok) out.push({ l: 'warn', t: `Газ не по ГОСТ: точка росы ${num(g.dew, 0)}°C (норма ${g.norm}°C) — увеличьте подачу ДЭГ`, go: 'gas:uppg', tab: 'gas' });
       if (g && g.hyd) out.push({ l: 'bad', t: 'УППГ: гидратная пробка — производительность снижена', go: 'gas:uppg', tab: 'gas' });
       if (g && g.nat > 0 && g.deg > 0 && s.stock.deg < g.deg * 10) out.push({ l: 'warn', t: `ДЭГ заканчивается: ${num(s.stock.deg)} кг`, go: 'stock', tab: 'stock' });
+      const dsd = s.today && s.today.ds; if (dsd && dsd.lost > 0.5) out.push({ l: 'bad', t: `АЗС без топлива: не продано ${num(dsd.lost, 1)} т — включите докупку`, go: 'azs:price', tab: 'azs' });
+      if (dsd && dsd.calc && dsd.calc.saltOut > 3) out.push({ l: 'warn', t: `ЭЛОУ: соли ${num(dsd.calc.saltOut, 1)} мг/л — коррозия колонны. Поднимите температуру и промывку`, go: 'npz:mode', tab: 'npz' });
+      if (dsd && dsd.calc && dsd.calc.coke > 0) out.push({ l: 'warn', t: 'Печь П-1 перегрета — коксование змеевика', go: 'npz:mode', tab: 'npz' });
+      if (E.facs(s, 'npz_ref').length && s.cat.rf < 0.6) out.push({ l: 'warn', t: `Катализатор риформинга ${pct(s.cat.rf)} — нужна регенерация`, go: 'npz:units', tab: 'npz' });
+      if (E.facs(s, 'npz_hdo').length && s.cat.hdo < 0.6) out.push({ l: 'warn', t: `Катализатор гидроочистки ${pct(s.cat.hdo)} — нужна регенерация`, go: 'npz:units', tab: 'npz' });
+      if (dsd && dsd.queue > 30) out.push({ l: 'info', t: `Очереди на АЗС: ${num(dsd.queue)} машин уехали — добавьте колонки`, go: 'azs:st', tab: 'azs' });
+      if (dsd && dsd.full) out.push({ l: 'warn', t: 'Парк НПЗ заполнен — постройте РВС НПЗ или продавайте ежедневно', go: 'npz:prod', tab: 'npz' });
+      else if (dsd && E.facs(s, 'npz').length && s.ds.feed > 50 && dsd.feed < s.ds.feed * 0.5) out.push({ l: 'warn', t: `НПЗ недогружен: ${num(dsd.feed)} из ${s.ds.feed} т/сут`, go: 'npz:mode', tab: 'npz' });
       const gwf = (s.gwells || []).filter(w => w.status === 'fail').length; if (gwf) out.push({ l: 'warn', t: `${gwf} газ. скв. в аварии — нужен ремонт`, go: 'gas:gwells', tab: 'gas' });
       const sick = s.people.filter(p => p.sickUntil > s.day).length; if (sick) out.push({ l: 'info', t: `На больничном: ${sick} чел.`, go: 'hse:log', tab: 'hse' });
     }
@@ -191,7 +202,7 @@
   }
   function view() {
     switch (ui.tab) {
-      case 'home': return vHome(); case 'prod': return vProd(); case 'ckppn': return vCkppn(); case 'gas': return vGasTab(); case 'sales': return vSales();
+      case 'home': return vHome(); case 'prod': return vProd(); case 'ckppn': return vCkppn(); case 'gas': return vGasTab(); case 'npz': return vNpz(); case 'azs': return vAzs(); case 'shares': return vShares(); case 'sales': return vSales();
       case 'staff': return vStaff(); case 'build': return vBuild(); case 'stock': return vStock(); case 'energy': return vEnergy();
       case 'bank': return vBank(); case 'hse': return vHse(); case 'kpi': return vKpi();
       case 'fin': return vFin(); case 'rating': return vRating(); case 'tech': return vTech(); case 'events': return vEvents(); case 'settings': return vSettings();
@@ -715,7 +726,7 @@
     if (key === 'well_inj' || key === 'well_water') return G.injHead({ running: true, w: 56, h: 40 });
     if (key.startsWith('tank')) return G.tank({ v: 60, c: 100, purpose: 'oil', w: 50, h: 46, id: 'c' + key });
     if (key === 'ckppn') return G.furnace({ w: 46, h: 46 });
-    return `<div class="cico">${G.icon({ agzu: 'prod', upsv: 'ckppn', bkns: 'drop', pump_ext: 'sales', gascomp: 'gas', uppg: 'gas', well_gas: 'gas', cdng: 'home', substation: 'energy', dgu: 'energy', gtes: 'energy', ses: 'energy' }[key] || 'build')}</div>`;
+    return `<div class="cico">${G.icon({ agzu: 'prod', upsv: 'ckppn', bkns: 'drop', pump_ext: 'sales', gascomp: 'gas', uppg: 'gas', well_gas: 'gas', npz: 'npz', npz_ref: 'npz', npz_rvs: 'ckppn', npz_rvs10: 'ckppn', azs: 'azs', cdng: 'home', substation: 'energy', dgu: 'energy', gtes: 'energy', ses: 'energy' }[key] || 'build')}</div>`;
   }
   function vServices() {
     return card('Подрядные услуги', `<div class="catalog">${Object.entries(D.SERVICES).map(([key, S]) => {
@@ -934,6 +945,300 @@
         ${card('Утилизация ПНГ', `<p class="hint" style="margin-top:0">Факел — плата за эмиссии, при утилизации ниже 80% — штрафы экологов. МКС сжимает газ 0,2 → 0,9 МПа.</p>
           <div class="btnrow">${btn('Построить МКС', 'tender', 'gascomp', 'primary')}${E.has(s, 'gtes') ? btn('ГТЭС 4 МВт', 'tender', 'gtes') : btn('Технология ГТЭС', 'gotech', '', '')}</div>`)}`;
     
+  }
+  /* ===================== НПЗ ===================== */
+  const sum = (a, f) => a.reduce((x, y) => x + f(y), 0);
+  const FK = ['ai', 'dt', 'mz'], FCOL = { ai: '#3fbf6f', dt: '#d8c13a', mz: '#8a6a4a' };
+  const dsT = () => (s.today && s.today.ds) || { feed: 0, load: 0, out: { ai: 0, dt: 0, mz: 0 }, whole: { ai: 0, dt: 0, mz: 0 }, azs: { ai: 0, dt: 0 }, bought: 0, lost: 0, azsRev: 0, dem: null };
+  const UNAME = { npz: 'ЭЛОУ-АТ', npz_vac: 'Вакуумный блок', npz_ref: 'Риформинг', npz_hdo: 'Гидроочистка', npz_fcc: 'Каткрекинг', npz_bit: 'Битумная' };
+  const has = t => E.facs(s, t).length > 0;
+  const uLoad = (R, u) => R && R.U[u] && R.U[u].cap > 0 ? R.U[u].in / R.U[u].cap : 0;
+  const npzR = () => { const d = dsT(); return d.calc || (has('npz') ? E.npzCalc(s, Math.max(1, Math.min(s.ds.feed, E.unitCap(s, 'npz') || 1)), E.coverage(s)) : null); };
+  function npzMargin() {
+    const R = npzR(); if (!R || R.F <= 0) return { diff: 0, per: 0 };
+    const i = idx(); let v = sum(FK, k => R.out[k] * E.fuelOwn(s, k)) + sum(Object.keys(R.side), k => R.side[k] * E.fuelMarket(s, k));
+    v -= (R.out.ai + R.out.dt + R.out.mz + sum(Object.keys(R.side), k => R.side[k])) * 900 * i + R.opex * i;
+    const crude = (E.oilPriceT(s, 3) - 1500 * i) * R.F;
+    return { diff: (v - crude) / R.F, per: v / R.F };
+  }
+  function npzScheme() {
+    const d = dsT(), R = npzR(), on = d.feed > 0.5, P = s.prodStock;
+    const dur = f => Math.max(0.6, Math.min(5, 5 / ((f || 0) / 40 + 0.25))).toFixed(2);
+    const pipe = (dd, flow, col, dash) => `<path d="${dd}" class="pipe"${dash ? ' style="stroke-width:5"' : ''}/><path d="${dd}" class="flow ${flow > 0.3 ? 'on' : ''}" stroke="${col}" style="animation-duration:${dur(flow)}s"/>`;
+    const lbl = (x, y, txt, cls = 'pl') => `<text x="${x}" y="${y}" class="${cls}">${txt}</text>`;
+    const box = (x, y, w, h, title, v1, v2, st, v3) => `<g class="node ${st || ''}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="9"/><text x="${x + w / 2}" y="${y + 17}" class="nt">${title}</text><text x="${x + w / 2}" y="${y + 33}" class="nv">${v1}</text>${v2 ? `<text x="${x + w / 2}" y="${y + 48}" class="ns">${v2}</text>` : ''}${v3 ? `<text x="${x + w / 2}" y="${y + 62}" class="ns">${v3}</text>` : ''}</g>`;
+    const nest = (svg, x, y) => svg.replace('<svg ', `<svg x="${x}" y="${y}" `);
+    const st = (u, warn) => !has(u) ? 'off' : E.facs(s, u).some(f => f.regen > 0 || f.status !== 'ok') ? 'n-warn' : warn ? 'n-warn' : '';
+    const U = R ? R.U : {}, t = x => num(x || 0) + ' т';
+    const N = s.np, C = s.cat;
+    const naf = R ? R.F * (E.CRUDE.naf + (s.ds.mode === 'ai' ? 0.03 : s.ds.mode === 'dt' ? -0.03 : 0)) : 0;
+    const ronOk = s.prodQ.ron >= 92, sulCl = E.sulClass(s.prodQ.sul);
+    return `<svg class="scheme npz" viewBox="0 0 1500 700" role="img" aria-label="Технологическая схема НПЗ">
+      ${nest(G.tank({ v: E.kpi(s).oilTank.v, c: E.kpi(s).oilTank.c, purpose: 'oil', w: 100, h: 92, id: 'nz0' }), 10, 300)}${lbl(60, 412, 'Нефть, РВС')}
+      ${pipe('M110 346 H150', d.feed, C.orange)}${lbl(130, 336, t(d.feed))}
+      ${box(150, 300, 140, 92, 'ЭЛОУ', R ? `соли ${num(R.saltIn)} → ${num(R.saltOut, 1)}` : '—', `мг/л · ${N.elT}°C`, st('npz', R && R.saltOut > 3), R ? `вода ${num(R.waterOut, 2)}%` : '')}
+      ${pipe('M290 346 H320', d.feed, C.orange)}
+      ${box(320, 300, 130, 92, 'Печь П-1', on ? `${N.t1}°C` : '—', R ? `топливо ${num(R.fuel, 1)} т` : '', st('npz', R && R.coke > 0), R && R.coke > 0 ? 'КОКСОВАНИЕ' : 'отбор ' + (R ? pct(R.rec) : '—'))}
+      <g class="flame ${on ? 'on' : ''}" style="transform-box:fill-box;transform-origin:50% 100%"><path d="M385 420 C375 412 380 400 385 392 C390 400 395 412 385 420Z" fill="${on ? (R && R.coke > 0 ? '#e66767' : '#d95926') : '#3a4654'}"/></g>
+      ${pipe('M450 346 H490', d.feed, C.orange)}
+      <g class="node ${has('npz') ? '' : 'off'}"><rect x="490" y="70" width="80" height="560" rx="34"/>
+        ${[110, 160, 210, 260, 310, 360, 410, 460, 510, 560].map(y => `<line x1="498" x2="562" y1="${y}" y2="${y}" stroke="rgba(255,255,255,.16)"/>`).join('')}
+        <text x="530" y="655" class="nt">К-1 / К-2</text><text x="530" y="672" class="ns">атм. колонна</text>
+        ${on ? [0, 1, 2, 3].map(i => `<circle class="bubble" cx="${508 + i * 14}" cy="590" r="3" fill="rgba(255,255,255,.35)" style="animation-delay:${i * 0.45}s"/>`).join('') : ''}</g>
+      ${pipe('M570 95 H610', R ? 1 : 0, '#9fb6c9', 1)}${lbl(650, 92, R ? `газ ${num(R.F * E.CRUDE.gas, 1)} т → печи` : 'газ → печи', 'ns')}
+      ${pipe('M570 200 H640', naf, '#7fb4ff')}${lbl(605, 190, 'нафта ' + t(naf))}
+      ${box(640, 160, 160, 80, 'Риформинг', has('npz_ref') ? t(U.npz_ref && U.npz_ref.in) : 'не построен', has('npz_ref') ? `${N.tr}°C · ОЧ ${num(R && R.ronR, 1)}` : 'нафта → опт', st('npz_ref', C.rf < 0.6), has('npz_ref') ? `катализатор ${pct(C.rf)}` : '')}
+      ${pipe('M800 200 H900', d.out.ai, FCOL.ai)}
+      ${R && R.side.naf > 0.5 ? lbl(720, 258, `нафта → опт ${t(R.side.naf)}`, 'ns') : ''}
+      ${pipe('M720 240 V285', has('npz_ref') && R ? R.h2p || 0 : 0, '#e6edf3', 1)}${has('npz_ref') ? lbl(760, 268, 'ВСГ (H₂)', 'ns') : ''}
+      ${pipe('M570 330 H640', R ? R.F * 0.3 : 0, FCOL.dt)}${lbl(605, 320, 'ДТ ' + t(R && (R.out.dt + (U.npz_hdo ? U.npz_hdo.in * 0.015 : 0))))}
+      ${box(640, 290, 160, 80, 'Гидроочистка', has('npz_hdo') ? t(U.npz_hdo && U.npz_hdo.in) : 'не построена', has('npz_hdo') ? `${N.th}°C · S ${num(R && R.sOutH)} ppm` : `S ${num(R ? R.sIn : 2500)} ppm`, st('npz_hdo', C.hdo < 0.6), has('npz_hdo') ? `катализатор ${pct(C.hdo)}` : '')}
+      ${pipe('M800 330 H900', d.out.dt, FCOL.dt)}
+      ${pipe('M570 470 H640', R ? R.F * 0.5 : 0, FCOL.mz)}${lbl(605, 460, 'мазут')}
+      ${box(640, 430, 160, 80, 'Вакуумный блок', has('npz_vac') ? t(U.npz_vac && U.npz_vac.in) : 'не построен', has('npz_vac') ? 'ВГО + гудрон' : 'мазут → парк', st('npz_vac'))}
+      ${pipe('M800 455 H840', U.npz_vac ? U.npz_vac.in * 0.48 : 0, '#c9a46b')}${lbl(820, 446, 'ВГО', 'ns')}
+      ${box(840, 420, 150, 80, 'Каткрекинг', has('npz_fcc') ? t(U.npz_fcc && U.npz_fcc.in) : 'не построен', has('npz_fcc') ? `${N.tf}°C · конв. ${pct(R && R.conv)}` : (has('npz_vac') ? 'ВГО → опт' : ''), st('npz_fcc'), has('npz_fcc') && R ? `СУГ ${t(R.side.lpg)}` : '')}
+      ${pipe('M915 420 V215', has('npz_fcc') && U.npz_fcc ? U.npz_fcc.in * 0.4 : 0, FCOL.ai)}${pipe('M940 420 V345', has('npz_fcc') && U.npz_fcc ? U.npz_fcc.in * 0.1 : 0, FCOL.dt)}
+      ${pipe('M720 510 V580 H840', U.npz_vac ? U.npz_vac.in * 0.5 : 0, '#5a4a3a')}${lbl(770, 572, 'гудрон', 'ns')}
+      ${box(840, 545, 150, 70, 'Битумная', has('npz_bit') ? (N.bit ? t(U.npz_bit && U.npz_bit.in) : 'выключена') : 'не построена', has('npz_bit') && R ? `битум ${t(R.side.bit)}` : 'гудрон → мазут', st('npz_bit', has('npz_bit') && !N.bit))}
+      ${pipe('M800 490 H820 V640 H1060 V575 H1080', d.out.mz, FCOL.mz)}
+      ${box(900, 170, 130, 64, 'Бензин', R && d.out.ai > 0 ? `ОЧ ${num(R.ron, 1)}` : '—', d.out.ai > 0 ? `${E.ronName(R.ron)} · ${t(d.out.ai)}` : 'нет риформинга', d.out.ai > 0 && R.ron < 92 ? 'n-warn' : (d.out.ai > 0 ? '' : 'off'))}
+      ${box(900, 300, 130, 64, 'Дизель', R ? `S ${num(R.sul)} ppm` : '—', R ? `класс ${E.sulClass(R.sul)} · ${t(d.out.dt)}` : '', R && R.sul > 50 ? 'n-warn' : '')}
+      ${pipe('M1030 200 H1080', d.out.ai, FCOL.ai)}${pipe('M1030 330 H1080', d.out.dt, FCOL.dt)}
+      ${FK.map((k, i) => `${nest(G.tank({ v: P[k], c: E.prodCapK(s, k) || 1, purpose: k, w: 96, h: 88, id: 'nzt' + k }), 1080, [150, 285, 515][i])}${lbl(1128, [252, 387, 617][i], `${num(P[k])} / ${num(E.prodCapK(s, k))} т`, 'ns')}`).join('')}
+      ${lbl(1128, 140, ronOk ? ronName2() : 'бензин ниже АИ-92', 'ns')}${lbl(1128, 275, 'ДТ ' + sulCl, 'ns')}
+      ${pipe('M1176 200 H1230', d.whole.ai + d.azs.ai, FCOL.ai)}${pipe('M1176 330 H1230', d.whole.dt + d.azs.dt, FCOL.dt)}${pipe('M1176 560 H1230', d.whole.mz, FCOL.mz)}
+      ${box(1230, 160, 250, 70, 'Бензовозы → АЗС', `${num(d.deliv)} т/сут`, `${E.facs(s, 'azs').length} АЗС · своих машин ${s.ds.trucks}`)}
+      ${box(1230, 290, 250, 70, 'Ж/д эстакада — опт', `${num(d.whole.ai + d.whole.dt + d.whole.mz)} т/сут`, money(sum(FK, k => d.whole[k] * E.fuelOwn(s, k))))}
+      ${box(1230, 420, 250, 90, 'Попутные продукты', R ? `${t(R.side.naf + R.side.lpg + R.side.vgo + R.side.bit)}/сут` : '—', R ? `нафта ${num(R.side.naf)} · СУГ ${num(R.side.lpg)}` : '', '', R ? `ВГО ${num(R.side.vgo)} · битум ${num(R.side.bit)}` : '')}
+      ${box(1230, 530, 250, 70, 'Мазут — опт', `${num(d.whole.mz)} т/сут`, s.ds.sell === 'season' ? 'по сезону' : 'ежедневно')}
+      ${!has('npz') ? `<text x="750" y="40" class="nt" style="fill:var(--warn)">НПЗ не построен</text>` : ''}
+    </svg>`;
+  }
+  const ronName2 = () => E.ronName(s.prodQ.ron) + ' в парке';
+  function npzGauges(R) {
+    const g = (value, min, max, bands, text, label) => `<div class="kpi">${G.gauge({ value, min, max, bands, text, label })}</div>`;
+    const sul = R ? R.sul : 2500;
+    return `<div class="kpis gauges">
+      ${g(R ? R.depth * 100 : 0, 0, 100, [{ to: 50, color: C.red }, { to: 75, color: C.yellow }, { to: 100, color: C.aqua }], R ? pct(R.depth, 1) : '—', 'Глубина переработки')}
+      ${g(R ? R.light * 100 : 0, 0, 80, [{ to: 35, color: C.red }, { to: 55, color: C.yellow }, { to: 80, color: C.aqua }], R ? pct(R.light, 1) : '—', 'Выход светлых')}
+      ${g(E.nelson(s), 1, 10, [{ to: 3, color: C.red }, { to: 6, color: C.yellow }, { to: 10, color: C.aqua }], num(E.nelson(s), 1), 'Индекс Нельсона')}
+      ${g(R && R.out.ai > 0 ? R.ron : 70, 70, 100, [{ to: 80, color: C.red }, { to: 92, color: C.yellow }, { to: 100, color: C.aqua }], R && R.out.ai > 0 ? num(R.ron, 1) : '—', 'ОЧ бензина')}
+      ${g(Math.log10(Math.max(1, sul)), 0, 3.6, [{ to: 1, color: C.aqua }, { to: 2.55, color: C.yellow }, { to: 3.6, color: C.red }], num(sul) + ' ppm', 'Сера в ДТ')}
+      ${g(R ? R.saltOut : 0, 0, 15, [{ to: 3, color: C.aqua }, { to: 6, color: C.yellow }, { to: 15, color: C.red }], R ? num(R.saltOut, 1) + ' мг/л' : '—', 'Соли после ЭЛОУ')}
+    </div>`;
+  }
+  function vNpz() {
+    const sb = sub(), d = dsT(), hasN = has('npz'), R = npzR(), mg = npzMargin(), N = s.np;
+    const capN = E.capOf(s, 'npz');
+    if (sb === 'kpi') {
+      const dd = s.daily.slice(-90), L = dd.map(x => x.d.slice(5).split('-').reverse().join('.'));
+      const rows = R ? [['Нефть (сырьё)', R.F, 1], ['Бензин (пул)', R.out.ai], ['Дизель (пул)', R.out.dt], ['Мазут', R.out.mz], ['Нафта — опт', R.side.naf], ['СУГ', R.side.lpg], ['Вакуумный газойль', R.side.vgo], ['Битум', R.side.bit], ['Топливо, газ, кокс, потери', R.loss]] : [];
+      const q = [
+        ['Бензин', 'Октановое число (ИМ)', '≥ 92', R && R.out.ai > 0 ? num(R.ron, 1) : '—', R && R.out.ai > 0 && R.ron >= 92],
+        ['Бензин', 'Марка', 'АИ-92 / АИ-95', R && R.out.ai > 0 ? E.ronName(R.ron) : '—', R && R.ron >= 92],
+        ['Дизель', 'Сера, ppm', '≤ 10 (К5)', R ? num(R.sul) : '—', R && R.sul <= 10],
+        ['Дизель', 'Экологический класс', 'К5', R ? E.sulClass(R.sul) : '—', R && R.sul <= 10],
+        ['Нефть после ЭЛОУ', 'Соли, мг/л', '≤ 3', R ? num(R.saltOut, 1) : '—', R && R.saltOut <= 3],
+        ['Нефть после ЭЛОУ', 'Вода, %', '≤ 0,2', R ? num(R.waterOut, 2) : '—', R && R.waterOut <= 0.2]];
+      return `${npzGauges(R)}
+        <div class="kpis">
+          ${kpiTile('Загрузка ЭЛОУ-АТ', pct(d.load), `${num(d.feed)} / ${num(capN)} т/сут`, lvl(d.load, 0.7, 0.4))}
+          ${kpiTile('Маржа переработки', (mg.diff >= 0 ? '+' : '') + num(mg.diff) + ' ₸/т', 'к продаже сырой нефти', mg.diff >= 0 ? 'good' : 'bad')}
+          ${kpiTile('Катализатор риформинга', has('npz_ref') ? pct(s.cat.rf) : '—', 'активность', has('npz_ref') ? lvl(s.cat.rf, 0.8, 0.6) : '')}
+          ${kpiTile('Катализатор ГО', has('npz_hdo') ? pct(s.cat.hdo) : '—', 'активность', has('npz_hdo') ? lvl(s.cat.hdo, 0.8, 0.6) : '')}
+        </div>
+        <div class="grid2">
+          ${card('Материальный баланс, сутки', R ? `<div class="tscroll"><table class="tbl"><thead><tr><th>Поток</th><th>т/сут</th><th>%</th></tr></thead><tbody>${rows.map(([n, v, b]) => `<tr${b ? ' class="hl"' : ''}><td>${n}</td><td>${num(v, 1)}</td><td>${pct(v / R.F, 1)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="hint">Нет переработки</p>')}
+          ${card('Паспорт качества', `<div class="tscroll"><table class="tbl"><thead><tr><th>Показатель</th><th>Норма</th><th>Факт</th></tr></thead><tbody>${q.map(r => `<tr><td>${r[1]}<br><small class="muted">${r[0]}</small></td><td>${r[2]}</td><td class="${r[3] === '—' ? '' : r[4] ? 'tgood' : 'tbad'}">${r[3]}</td></tr>`).join('')}</tbody></table></div>`)}
+        </div>
+        ${card('Загрузка установок', NPZ_LIST().map(u => `<div class="ubar"><span>${UNAME[u]}</span>${has(u) ? bar(uLoad(R, u), uLoad(R, u) > 0.95 ? 'warn' : 'good') : '<small>не построена</small>'}<b>${has(u) ? pct(uLoad(R, u)) : ''}</b></div>`).join(''))}
+        <div class="grid2">
+          ${card('ОЧ бензина и глубина, 90 дней', G.line({ labels: L, series: [{ name: 'ОЧ', color: FCOL.ai, values: dd.map(x => x.ron != null ? x.ron : null) }, { name: 'Глубина, %', color: C.aqua, values: dd.map(x => x.dep != null ? x.dep * 100 : null) }], height: 180, empty: 'Появится после запуска НПЗ' }))}
+          ${card('Сера в ДТ и соли, 90 дней', G.line({ labels: L, series: [{ name: 'Сера, ppm', color: FCOL.dt, values: dd.map(x => x.sul != null ? x.sul : null) }], height: 180, unit: 'ppm', empty: 'Появится после запуска НПЗ' }))}
+        </div>`;
+    }
+    if (sb === 'mode') {
+      const sl = (k, label, v, min, max, unit, norm, dis) => `<div class="slider${dis ? ' dis' : ''}"><label>${label}: <b id="${k}v">${v}${unit}</b> <small>${norm}</small></label><input type="range" min="${min}" max="${max}" step="1" value="${v}" data-input="${k}" data-change="${k}"${dis ? ' disabled' : ''}></div>`;
+      return `<div class="grid2">
+        ${card('Сырьё и отбор', `
+          ${sl('feed', 'Загрузка НПЗ', s.ds.feed, 0, Math.max(400, Math.round(capN / 10) * 10), ' т/сут', `мощность ${num(capN)} т`)}
+          <label class="sub-l">Профиль отбора (конец кипения бензина)</label><div class="seg seg3">${[['ai', 'Бензин 200°C'], ['bal', '180°C'], ['dt', 'Дизель 160°C']].map(([k, n]) => btn(n, 'dsMode', k, s.ds.mode === k ? 'on' : '')).join('')}</div>
+          ${sl('elT', 'ЭЛОУ: температура', N.elT, 90, 150, '°C', 'норма 120–140')}
+          ${sl('wash', 'ЭЛОУ: промывочная вода', N.wash, 0, 12, '%', 'норма 5–10')}
+          ${sl('t1', 'Печь П-1: выход', N.t1, 330, 380, '°C', 'норма 350–362, выше — кокс')}`)}
+        ${card('Вторичные процессы', `
+          ${sl('tr', 'Риформинг: реакторы', N.tr, 470, 525, '°C', 'выше — ОЧ, ниже выход', !has('npz_ref'))}
+          ${sl('th', 'Гидроочистка: реактор', N.th, 320, 390, '°C', 'выше — меньше серы', !has('npz_hdo'))}
+          ${sl('tf', 'Каткрекинг: реактор', N.tf, 490, 540, '°C', 'выше — конверсия и кокс', !has('npz_fcc'))}
+          <label class="check"><input type="checkbox" data-change="npbit" ${N.bit ? 'checked' : ''} ${has('npz_bit') ? '' : 'disabled'}> Битумная установка в работе (зимой битум дешевле мазута)</label>`)}
+        ${card('Прогноз при этом режиме', R ? `<div class="kv3"><div><span>Бензин</span><b>${num(R.out.ai, 1)} т · ОЧ ${R.out.ai > 0 ? num(R.ron, 1) : '—'}</b></div><div><span>Дизель</span><b>${num(R.out.dt, 1)} т · ${E.sulClass(R.sul)}</b></div><div><span>Мазут</span><b>${num(R.out.mz, 1)} т</b></div>
+          <div><span>Глубина</span><b>${pct(R.depth, 1)}</b></div><div><span>Соли</span><b class="${R.saltOut <= 3 ? 'tgood' : 'tbad'}">${num(R.saltOut, 1)} мг/л</b></div><div><span>Маржа</span><b class="${mg.diff >= 0 ? 'tgood' : 'tbad'}">${num(mg.diff)} ₸/т</b></div></div>` : '<p class="hint">Постройте НПЗ</p>')}
+        ${card('Продажа и запас', `<label class="sub-l">Продажа оптом</label><div class="seg seg3">${[['daily', 'Ежедневно'], ['season', 'По сезону']].map(([k, n]) => btn(n, 'dsSell', k, s.ds.sell === k ? 'on' : '')).join('')}</div>
+          ${sl('res', 'Запас для АЗС', s.ds.res, 0, 30, ' сут', '')}
+          <p class="hint">«По сезону»: бензин копится до лета, дизель и мазут — до зимы.</p>`)}
+      </div>`;
+    }
+    if (sb === 'units') {
+      return `<div class="kpis">${kpiTile('Индекс Нельсона', num(E.nelson(s), 1), 'сложность НПЗ')}${kpiTile('Глубина', R ? pct(R.depth, 1) : '—', 'переработки')}</div>
+        <div class="gwells">${NPZ_LIST().map(u => { const B = D.BUILD[u], f = E.facs(s, u)[0], req = B.req && !has(B.req);
+          const cat = u === 'npz_ref' ? s.cat.rf : u === 'npz_hdo' ? s.cat.hdo : null;
+          return `<div class="gwell ${f ? 'work' : ''}"><div class="w-h"><b>${G.icon('npz')} ${B.name}</b>${f ? pill(f.regen > 0 ? 'регенерация ' + f.regen + ' сут' : f.status === 'ok' ? 'в работе' : 'ремонт', f.regen > 0 || f.status !== 'ok' ? 'warn' : 'good') : pill('нет', '')}</div>
+            <small>${B.desc}</small>
+            <div class="kv3"><div><span>Мощность</span><b>${num(B.cap)} т/сут</b></div><div><span>Загрузка</span><b>${f ? pct(uLoad(R, u)) : '—'}</b></div><div><span>Нельсон</span><b>×${E.NELSON[u]}</b></div></div>
+            ${f ? `${bar(f.health / 100)}<small>износ ${Math.round(100 - f.health)}%${cat != null ? ` · катализатор ${pct(cat)}` : ''}</small>` : ''}
+            <div class="btnrow">${f ? (cat != null ? btn(`Регенерация · ${money((u === 'npz_ref' ? 30e6 : 25e6) * idx())}`, 'npzRegen', f.id, 'small', f.regen > 0) : '') : btn(`Построить · ${money(B.cost * idx())}`, 'tender', u, 'small primary', req)}${req ? `<small>нужен ${D.BUILD[B.req].name}</small>` : ''}</div></div>`; }).join('')}</div>`;
+    }
+    if (sb === 'prod') return vNpzProd();
+    return `${card('Технологическая схема НПЗ (онлайн)', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap big">${npzScheme()}</div>
+      <p class="hint">Серые блоки — не построены. Жёлтые — режим вне нормы.</p>`)}
+      ${npzGauges(R)}
+      <div class="kpis">
+        ${kpiTile('Переработка', num(d.feed) + ' т/сут', hasN ? `загрузка ${pct(d.load)}` : 'нет НПЗ', hasN ? lvl(d.load, 0.7, 0.3) : '')}
+        ${kpiTile('Маржа НПЗ', (mg.diff >= 0 ? '+' : '') + num(mg.diff) + ' ₸/т', 'к продаже сырой нефти', mg.diff >= 0 ? 'good' : 'bad')}
+      </div>
+      ${!hasN ? card('Свой НПЗ', `<p class="hint" style="margin-top:0">Начните с ЭЛОУ-АТ, затем риформинг, гидроочистка, вакуум и крекинг — каждая установка углубляет переработку.</p><div class="btnrow">${btn('Построить НПЗ · ' + money(D.BUILD.npz.cost * idx()), 'tender', 'npz', 'primary')}</div>`) : ''}`;
+  }
+  const NPZ_LIST = () => E.NPZ_UNITS;
+  function vNpzProd() {
+    const d = dsT(), has = E.facs(s, 'npz').length > 0;
+      const h = s.history.slice(-24), L = h.map(x => ymRu(x.m));
+      const pt = E.ptanks(s);
+      const trows = pt.map(f => `<div class="gwell work"><div class="w-h"><b>${G.icon('ckppn')} ${esc(f.name)}</b>${pill(f.status === 'ok' ? 'в работе' : 'стройка/ремонт', f.status === 'ok' ? 'good' : 'warn')}</div>
+        ${bar(f.health / 100)}<small>износ ${Math.round(100 - f.health)}%</small>
+        <div class="btnrow">${FK.filter(k => k !== f.prod).map(k => btn('Под ' + E.PNAME[k], 'npzTank', f.id + ':' + k, 'small')).join('')}${btn('Снести', 'demolish', f.id, 'small ghost')}</div></div>`).join('');
+      return `${card('Товарный парк НПЗ', `<div class="tanks">${FK.map(k => `<div class="tankc">${G.tank({ v: s.prodStock[k], c: E.prodCapK(s, k) || 1, purpose: k, w: 110, h: 100, id: 'pp' + k })}<b>${E.FUEL[k].name}</b><small>${num(s.prodStock[k])} / ${num(E.prodCapK(s, k))} т${E.holdK(s, k) ? ' · копим' : ''}</small></div>`).join('')}</div>
+        ${dsT().full ? '<p class="hint tbad">Парк заполнен — НПЗ снижает загрузку</p>' : ''}
+        <p class="hint">Встроенный парк НПЗ — 8 000 т. Новые РВС увеличивают объём для запаса АЗС и сезонного хранения.</p>`)}
+      ${card('Построить РВС НПЗ', has ? FK.map(k => `<div class="prow"><span><span class="dot" style="background:${FCOL[k]}"></span>${E.FUEL[k].name}</span><div class="btnrow">${btn('3 000 т · ' + money(D.BUILD.npz_rvs.cost * idx()), 'tender', 'npz_rvs:' + k, 'small')}${btn('10 000 т · ' + money(D.BUILD.npz_rvs10.cost * idx()), 'tender', 'npz_rvs10:' + k, 'small')}</div></div>`).join('') : '<p class="hint" style="margin-top:0">Сначала постройте НПЗ.</p>')}
+      ${pt.length ? card('РВС НПЗ', `<div class="gwells">${trows}</div><p class="hint">Перевод под другой продукт — зачистка ${money(2e6 * idx())}, резервуар должен быть свободен.</p>`) : ''}
+      <div class="grid2">
+        ${card('Переработка по месяцам, тыс. т', G.bars({ labels: L, series: [{ name: 'Бензин', color: FCOL.ai, values: h.map(x => ((x.ds && x.ds.ai) || 0) / 1e3) }, { name: 'Дизель', color: FCOL.dt, values: h.map(x => ((x.ds && x.ds.dt) || 0) / 1e3) }, { name: 'Мазут', color: FCOL.mz, values: h.map(x => ((x.ds && x.ds.mz) || 0) / 1e3) }], stacked: true, height: 190, unit: 'тыс. т', empty: 'Появится после первого месяца работы НПЗ' }))}
+        ${card('Выручка от нефтепродуктов', G.bars({ labels: L, series: [{ name: 'Опт', color: C.blue, values: h.map(x => (x.cats && x.cats['Продажа нефтепродуктов']) || 0) }, { name: 'АЗС', color: C.aqua, values: h.map(x => (x.cats && x.cats['Розница АЗС']) || 0) }], height: 190, unit: '₸', empty: 'Появится после первого месяца' }))}
+      </div>`;
+      }
+  /* ===================== АЗС ===================== */
+  function azsPic(f) {
+    const st = f.st || {}, cars = Math.min(6, Math.round((st.served || 0) / 40)), q = Math.min(4, Math.round((st.queue || 0) / 15));
+    const brand = esc(s.company.name.split(' ')[0].toUpperCase().slice(0, 14));
+    const lv = k => Math.max(0, Math.min(1, f.tk[k] / f.tkCap[k]));
+    const pumps = Array.from({ length: f.trk }, (_, i) => { const x = 70 + i * (160 / Math.max(1, f.trk - 1 || 1)) - (f.trk === 1 ? -80 : 0); return `<rect x="${x - 5}" y="64" width="10" height="20" rx="2" fill="#2f4a73"/><rect x="${x - 3}" y="67" width="6" height="4" fill="#7fd1ff"/>`; }).join('');
+    const car = (x, col, cls, d) => `<g class="${cls}" style="animation-delay:${d}s"><rect x="${x}" y="77" width="24" height="8" rx="3" fill="${col}"/><rect x="${x + 4}" y="72" width="13" height="6" rx="2" fill="#9fb6c9"/><circle cx="${x + 5}" cy="86" r="2.6" fill="#111"/><circle cx="${x + 19}" cy="86" r="2.6" fill="#111"/></g>`;
+    const cols = ['#e6edf3', '#d84a3a', '#3987e5', '#c98500', '#3fbf6f', '#9b7be0'];
+    return `<svg class="azspic big" viewBox="0 0 320 140" aria-hidden="true">
+      <rect x="40" y="30" width="200" height="12" rx="2" fill="#d84a3a"/><text x="140" y="39.5" text-anchor="middle" font-size="8" font-weight="800" fill="#fff">${brand}</text>
+      <rect x="48" y="42" width="5" height="44" fill="#56687a"/><rect x="227" y="42" width="5" height="44" fill="#56687a"/>
+      ${pumps}
+      <rect x="250" y="50" width="62" height="36" rx="3" fill="#24384c"/><text x="281" y="64" text-anchor="middle" font-size="7" fill="#cfe0ef">МАГАЗИН</text>${f.cafe ? '<text x="281" y="76" text-anchor="middle" font-size="7" fill="#c98500">☕ КАФЕ</text>' : ''}
+      ${f.wash ? '<rect x="2" y="56" width="34" height="30" rx="3" fill="#1d4f7a"/><text x="19" y="74" text-anchor="middle" font-size="6.5" fill="#cfe0ef">МОЙКА</text>' : ''}
+      <rect x="0" y="88" width="320" height="4" fill="#2b3a4a"/>
+      ${Array.from({ length: cars }, (_, i) => car(-30, cols[i % cols.length], 'car', i * 1.1)).join('')}
+      ${q ? `<text x="6" y="104" font-size="8" fill="#e66767">очередь ~${num(st.queue)} маш.</text>` : ''}
+      <rect x="0" y="108" width="320" height="32" fill="#141d27"/>
+      ${['ai', 'dt'].map((k, i) => `<g transform="translate(${60 + i * 110},112)"><rect width="90" height="22" rx="11" fill="#1f2b38" stroke="#3a4a5a"/><rect x="2" y="2" width="${(86 * lv(k)).toFixed(1)}" height="18" rx="9" fill="${FCOL[k]}" opacity=".85"/><text x="45" y="15" text-anchor="middle" font-size="8" font-weight="700" fill="#fff">${k === 'ai' ? 'АИ-92' : 'ДТ'} ${pct(lv(k))}</text></g>`).join('')}
+      ${(st.deliv || 0) > 0 ? '<g class="truck"><rect x="250" y="94" width="34" height="11" rx="3" fill="#c98500"/><rect x="284" y="96" width="12" height="9" rx="2" fill="#e6edf3"/></g>' : ''}
+    </svg>`;
+  }
+  function azsLogistics() {
+    const d = dsT(), az = E.facs(s, 'azs').filter(f => f.status === 'ok');
+    const pipe = (dd, flow, col) => `<path d="${dd}" class="pipe"/><path d="${dd}" class="flow ${flow > 0.3 ? 'on' : ''}" stroke="${col}" style="animation-duration:${Math.max(0.7, 4 / ((flow || 0) / 20 + 0.3)).toFixed(2)}s"/>`;
+    const box = (x, y, w, h, t1, v, v2, st) => `<g class="node ${st || ''}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="9"/><text x="${x + w / 2}" y="${y + 18}" class="nt">${t1}</text><text x="${x + w / 2}" y="${y + 34}" class="nv">${v}</text>${v2 ? `<text x="${x + w / 2}" y="${y + 49}" class="ns">${v2}</text>` : ''}</g>`;
+    const own = E.facs(s, 'npz').length > 0, okA = E.retailOK(s, 'ai'), okD = E.retailOK(s, 'dt');
+    return `<svg class="scheme" viewBox="0 0 900 260" role="img" aria-label="Логистика АЗС">
+      ${box(20, 30, 180, 64, 'Парк НПЗ', own ? `${num(s.prodStock.ai)} / ${num(s.prodStock.dt)} т` : 'нет НПЗ', own ? `АИ ${okA ? '✓' : '✗'} · ДТ ${okD ? '✓' : '✗ класс'}` : '', own ? '' : 'off')}
+      ${box(20, 160, 180, 64, 'Оптовый рынок', s.ds.buy ? `${num(d.bought, 1)} т/сут` : 'закупка выкл.', 'докупка', s.ds.buy ? '' : 'off')}
+      ${pipe('M200 62 H330 V110 H360', d.deliv - d.bought, FCOL.ai)}${pipe('M200 192 H330 V150 H360', d.bought, '#7fb4ff')}
+      ${box(360, 95, 200, 70, 'Бензовозы', `${num(d.deliv, 1)} т/сут`, `своих ${s.ds.trucks} (${num(E.truckCap(s))} т) · наём ${num(d.hired, 1)} т`, d.hired > 0 ? 'n-warn' : '')}
+      ${pipe('M560 130 H640', d.deliv, FCOL.dt)}
+      ${box(640, 80, 240, 100, `АЗС: ${az.length}`, `${num(d.cars)} машин/сут`, `${num((d.azs.ai / 0.745 + d.azs.dt / 0.84) * 1000)} л · очередь ${num(d.queue)}`, d.dry > 0.5 ? 'n-warn' : '')}
+      <text x="760" y="196" class="ns">${d.dry > 0.5 ? 'сухие резервуары: −' + num(d.dry, 1) + ' т' : 'резервуары в норме'}</text>
+    </svg>`;
+  }
+  function vAzs() {
+    const sb = sub(), d = dsT(), az = E.facs(s, 'azs').filter(f => f.status === 'ok');
+    const litres = (d.azs.ai / 0.745 + d.azs.dt / 0.84) * 1000, rev = d.azsRev;
+    const check = d.cars > 0 ? (rev + d.shopRev) / d.cars : 0;
+    const margin = litres > 0 ? sum(['ai', 'dt'], k => d.azs[k] * (E.retailPrice(s, k) - E.EXCISE[k] * idx() - E.fuelMarket(s, k))) / litres : 0;
+    if (sb === 'price') {
+      const h = s.history.slice(-24), L = h.map(x => ymRu(x.m));
+      return `<div class="grid2">
+        ${card('Цены на АЗС', `
+          <div class="slider"><label>Наценка к рынку: <b id="mkpv">${s.ds.mkp > 0 ? '+' : ''}${s.ds.mkp}%</b></label><input type="range" min="-10" max="15" step="1" value="${s.ds.mkp}" data-input="mkp" data-change="mkp"></div>
+          <div class="tscroll"><table class="tbl"><thead><tr><th>Топливо</th><th>Рынок</th><th>Наша</th><th>Маржа</th></tr></thead><tbody>
+            ${['ai', 'dt'].map(k => `<tr><td><span class="dot" style="background:${FCOL[k]}"></span>${k === 'ai' ? 'АИ-92' : 'ДТ'}</td><td>${num(E.perLitre(s, k, E.retailMarket(s, k)), 1)} ₸/л</td><td><b>${num(E.perLitre(s, k, E.retailPrice(s, k)), 1)} ₸/л</b></td><td>${num(E.perLitre(s, k, E.retailPrice(s, k) - E.EXCISE[k] * idx() - E.fuelMarket(s, k)), 1)} ₸/л</td></tr>`).join('')}</tbody></table></div>
+          <div class="tscroll"><table class="tbl"><thead><tr><th>Наценка</th>${[-10, -5, 0, 5, 10, 15].map(m => `<th>${m > 0 ? '+' : ''}${m}%</th>`).join('')}</tr></thead><tbody><tr><td>Клиенты</td>${[-10, -5, 0, 5, 10, 15].map(m => `<td class="${m === s.ds.mkp ? 'tgood' : ''}">${pct(Math.min(1.4, Math.exp(-m * 0.05)))}</td>`).join('')}</tr></tbody></table></div>
+          <label class="check"><input type="checkbox" data-change="dsbuy" ${s.ds.buy ? 'checked' : ''}> Докупать топливо оптом, если своего нет или оно не по классу</label>
+          <p class="hint">В рознице только АИ-92 и выше, дизель не ниже К4.</p>`)}
+        ${card('Продажи АЗС по месяцам, т', G.bars({ labels: L, series: [{ name: 'Продано', color: C.aqua, values: h.map(x => (x.ds && x.ds.azs) || 0) }], height: 200, unit: 'т', empty: 'Появится после первого месяца' }))}
+      </div>`;
+    }
+    if (sb === 'st') {
+      if (!az.length) return card('Станции', '<p class="hint">Пока нет АЗС. Постройте на вкладке «Сеть».</p>');
+      return `<div class="gwells">${az.map(f => { const st = f.st || {}, T = E.AZS_TRAF[f.loc] || E.AZS_TRAF.road;
+        const dayAi = st.served * T.l * (1 - T.dt) / 1000 * 0.745, dayDt = st.served * T.l * T.dt / 1000 * 0.84;
+        return `<div class="gwell work"><div class="w-h"><b>${G.icon('azs')} ${esc(f.name)}</b>${pill(st.queue > 1 ? 'очередь' : st.dry > 0.1 ? 'нет топлива' : 'работает', st.queue > 1 || st.dry > 0.1 ? 'warn' : 'good')}</div>
+          ${azsPic(f)}
+          <div class="kv3"><div><span>Машин</span><b>${num(st.served)}</b></div><div><span>Литров</span><b>${num(st.l)}</b></div><div><span>Налив</span><b>${num(T.l)} л</b></div>
+            <div><span>Загрузка ТРК</span><b class="${st.cars / (f.trk * 110) > 0.95 ? 'tbad' : ''}">${pct(Math.min(1.5, st.cars / (f.trk * 110)))}</b></div><div><span>Запас АИ / ДТ</span><b>${num(dayAi > 0 ? f.tk.ai / dayAi : 0, 1)} / ${num(dayDt > 0 ? f.tk.dt / dayDt : 0, 1)} сут</b></div><div><span>Выручка</span><b>${money(st.rev + st.shop)}</b></div></div>
+          ${bar(f.health / 100)}<small>износ ${Math.round(100 - f.health)}% · колонок ${f.trk} · резервуары ${num(f.tkCap.ai + f.tkCap.dt)} т</small>
+          <div class="btnrow">${f.trk < 8 ? btn('+2 колонки · ' + money(10e6 * idx()), 'azsUp', f.id + ':trk', 'small') : ''}${!f.cafe ? btn('Кафе · ' + money(20e6 * idx()), 'azsUp', f.id + ':cafe', 'small') : ''}${!f.wash ? btn('Мойка · ' + money(30e6 * idx()), 'azsUp', f.id + ':wash', 'small') : ''}${f.tkCap.ai < 74 ? btn('Резервуары ×2 · ' + money(15e6 * idx()), 'azsUp', f.id + ':tank', 'small') : ''}</div></div>`; }).join('')}</div>`;
+    }
+    return `<div class="kpis">
+        ${kpiTile('Сеть АЗС', az.length, `${num(d.cars)} машин/сут`)}
+        ${kpiTile('Продано', num(litres) + ' л', `${num(d.azs.ai + d.azs.dt, 1)} т/сут`, litres > 0 ? 'good' : '')}
+        ${kpiTile('Средний чек', num(check) + ' ₸', 'топливо + магазин')}
+        ${kpiTile('Маржа', num(margin, 1) + ' ₸/л', 'после акциза и топлива', margin > 0 ? 'good' : 'bad')}
+        ${kpiTile('Потери', num(d.queue) + ' маш.', d.dry > 0.1 ? `нет топлива: ${num(d.dry, 1)} т` : 'очереди у колонок', d.queue > 1 || d.dry > 0.1 ? 'warn' : 'good')}
+        ${kpiTile('Наёмные бензовозы', num(d.hired, 1) + ' т', `своих машин ${s.ds.trucks}`, d.hired > 0 ? 'warn' : 'good')}
+      </div>
+      ${card('Логистика топлива (онлайн)', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap">${azsLogistics()}</div>`)}
+      <div class="grid2">
+        ${card('Бензовозы', `<p class="hint" style="margin-top:0">Свой бензовоз — 44 т/сут за ${money(20000 * idx())} в день. Наём — ${money(2500 * idx())} за тонну.</p>
+          <div class="btnrow">${btn('Купить · ' + money(25e6 * idx()), 'trucks', s.ds.trucks + 1, 'primary')}${s.ds.trucks > 0 ? btn('Продать один', 'trucks', s.ds.trucks - 1) : ''}</div>`)}
+        ${card('Построить АЗС', `${Object.entries(D.AZS_LOC).map(([k, L]) => { const T = E.AZS_TRAF[k]; return `<div class="prow"><span>${L.name[0].toUpperCase() + L.name.slice(1)} — ~${T.cars} машин/сут, налив ${T.l} л, дизель ${pct(T.dt)}</span><div class="btnrow">${btn(money(D.BUILD.azs.cost * L.cost * idx()), 'tender', 'azs:' + k, k === 'road' ? 'small primary' : 'small')}</div></div>`; }).join('')}`)}
+      </div>`;
+  }
+  /* ===================== Акции ===================== */
+  function vShares() {
+    const sb = sub(), S = s.sh, h12 = s.history.slice(-12), profit = sum(h12, x => x.net) * (h12.length ? 12 / h12.length : 0);
+    if (sb === 'market') {
+      const list = s.companies.slice().sort((a, b) => b.cap - a.cap).slice(0, 40);
+      const pv = E.portValue(s), cost = sum(Object.values(s.port), p => p.qty * p.avg);
+      const rowsP = Object.entries(s.port).map(([n, p]) => { const c = s.companies.find(x => x.name === n); const pr = c ? E.compPrice(c) : p.last; const i = s.companies.indexOf(c);
+        return `<tr><td>${esc(n)}</td><td>${num(p.qty)}</td><td>${num(pr, 1)}</td><td class="${pr >= p.avg ? 'tgood' : 'tbad'}">${pr >= p.avg ? '+' : ''}${pct(pr / p.avg - 1, 1)}</td><td>${btn('Продать', 'shSell', i, 'small')}</td></tr>`; }).join('');
+      return `<div class="kpis">${kpiTile('Портфель', money(pv), Object.keys(s.port).length + ' компаний')}${kpiTile('Результат', (pv - cost >= 0 ? '+' : '') + money(pv - cost), 'дивиденды ≈4% годовых', pv >= cost ? 'good' : 'bad')}</div>
+        ${rowsP ? card('Мой портфель', `<div class="tscroll"><table class="tbl"><thead><tr><th>Компания</th><th>Акций</th><th>Цена</th><th>Доход</th><th></th></tr></thead><tbody>${rowsP}</tbody></table></div>`) : ''}
+        ${card(esc(D.EXCHANGE), `<div class="tscroll"><table class="tbl"><thead><tr><th>Компания</th><th>Цена, ₸</th><th></th></tr></thead><tbody>
+          ${list.map(c => `<tr><td>${esc(c.name)}<br><small class="muted">${money(c.cap)}</small></td><td>${num(E.compPrice(c), 1)}</td><td>${btn('Купить', 'shBuy', s.companies.indexOf(c), 'small')}</td></tr>`).join('')}</tbody></table></div>
+          <p class="hint">Покупка — на ${money(100e6 * idx())}. Цены меняются раз в месяц вместе с рынком нефти.</p>`)}`;
+    }
+    if (!S.listed) {
+      const cap = E.capitalization(s), need = E.ipoMin(s);
+      return `<div class="kpis">${kpiTile('Оценка компании', money(cap), 'по активам и добыче')}${kpiTile('Цена акции (оценка)', num(E.fairPrice(s), 1) + ' ₸', `${num(S.total / 1e6)} млн акций`)}</div>
+        ${card('Выход на биржу (IPO)', `${bar(Math.min(1, cap / need), cap >= need ? 'good' : 'warn')}<small>${money(cap)} из ${money(need)} для IPO</small>
+          <p class="hint">IPO: компания выпускает новые акции и получает деньги. Скидка инвесторам 10%, комиссия 4%.</p>
+          <div class="btnrow">${[10, 20, 30].map(p => btn(`IPO ${p}% · ≈${money(S.total * p / 100 * E.fairPrice(s) * 0.9)}`, 'shOp', 'ipo:' + p, p === 20 ? 'primary' : '', cap < need)).join('')}</div>`)}
+        ${divCard(profit)}`;
+    }
+    const hist = S.hist.slice(-36), mc = E.marketCap(s), first = hist.length > 1 ? hist[hist.length - 2].p : S.price;
+    return `<div class="kpis">
+        ${kpiTile('Цена акции', num(S.price, 1) + ' ₸', `${S.price >= first ? '▲' : '▼'} ${pct(S.price / first - 1, 1)} за месяц`, S.price >= first ? 'good' : 'bad')}
+        ${kpiTile('Капитализация', money(mc), 'P/E ' + (profit > 0 ? num(mc / profit, 1) : '—'))}
+        ${kpiTile('В свободном обращении', pct(S.float, 1), `казначейских ${pct(S.treasury / S.total, 1)}`)}
+        ${kpiTile('Настроение рынка', pct(S.sent), S.sent >= 1 ? 'выше оценки' : 'ниже оценки', S.sent >= 1 ? 'good' : 'warn')}
+      </div>
+      ${card('Котировки', G.line({ labels: hist.map(x => x.d.slice(5).split('-').reverse().join('.') + '.' + x.d.slice(2, 4)), series: [{ name: 'Цена', color: C.aqua, values: hist.map(x => x.p) }], height: 200, unit: '₸', empty: 'Котировки появятся через месяц' }))}
+      <div class="grid2">
+        ${divCard(profit)}
+        ${card('Операции с акциями', `<div class="btnrow">${btn(`Выкуп 1% · ${money(S.total * 0.01 * S.price * 1.02)}`, 'shOp', 'buyback:' + Math.round(S.total * 0.01))}${btn('Допэмиссия 10%', 'shOp', 'spo:10', '', s.day - S.lastIssue < 365)}</div>
+          <p class="hint">Выкуп поддерживает цену. Допэмиссия даёт деньги, но снижает доверие совета (−3).</p>`)}
+      </div>`;
+  }
+  function divCard(profit) {
+    const S = s.sh, ok = s.day - S.lastDiv >= 80;
+    return card('Дивиденды', `<div class="kv3"><div><span>Прибыль за 12 мес.</span><b>${money(profit)}</b></div><div><span>Выплачено всего</span><b>${money(S.divTotal)}</b></div></div>
+      <div class="btnrow">${[0.1, 0.25, 0.5].map(r => btn(`${pct(r)} прибыли · ${money(Math.max(0, profit * r))}`, 'shOp', 'dividend:' + Math.round(Math.max(0, profit * r)), '', !ok || profit <= 0)).join('')}</div>
+      <p class="hint">Дивиденды повышают доверие совета${S.listed ? ' и цену акций' : ''}. Не чаще раза в квартал.</p>`);
   }
   /* ===================== ЦДПиТГ — цех добычи, подготовки и транспортировки газа ===================== */
   const tq = v => num((v || 0) / 1000, 1) + ' тыс.';
@@ -1234,7 +1539,7 @@
   }
   const ago = t => { if (!t) return 'никогда'; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'только что' : m < 60 ? m + ' мин назад' : m < 1440 ? Math.round(m / 60) + ' ч назад' : Math.round(m / 1440) + ' дн. назад'; };
   function flash(text, type = 'info') { if (s) s.flash.push({ text, type }); else alert(text); }
-  const ACT_SND = { accept: 'cash', spot: 'cash', hire: 'pop', buy: 'spend', award: 'stamp', tech: 'good', loan: 'coin', deposit: 'coin', withdraw: 'coin', repay: 'spend', maintain: 'hiss', repair: 'hiss', planCustom: 'stamp', cancelContract: 'leave', cancelProject: 'leave', fire: 'leave', salaryAll: 'coin', tankPurpose: 'hiss', demolish: 'build' };
+  const ACT_SND = { regen: 'hiss', azsUp: 'build', shares: 'cash', accept: 'cash', spot: 'cash', hire: 'pop', buy: 'spend', award: 'stamp', tech: 'good', loan: 'coin', deposit: 'coin', withdraw: 'coin', repay: 'spend', maintain: 'hiss', repair: 'hiss', planCustom: 'stamp', cancelContract: 'leave', cancelProject: 'leave', fire: 'leave', salaryAll: 'coin', tankPurpose: 'hiss', demolish: 'build' };
   const OP_SND = { bonus: 'coin', remark: 'warn', reprimand: 'fail', fire: 'leave', hire: 'pop', grade: 'good', train: 'good', search: 'click' };
   function doAct(type, a, okMsg) {
     try {
@@ -1285,8 +1590,19 @@
       if (!ws.length) { flash('Нет подходящих скважин', 'warn'); render(); return; }
       form(D.SERVICES[a].name, 'Выберите скважину', [{ name: 'w', label: 'Скважина', type: 'select', options: ws.sort((x, y) => x.health - y.health).map(w => [w.id, `${w.name} — ${E.wellTypeName(w.type)}, потенциал ${num(w.potential, 1)}, обводн. ${pct(w.wc)}, износ ${Math.round(w.health)}%`]) }], v => { ui.modal = null; handlers.svc(`${a}:${v.w}`); return false; }, 'К тендеру');
     },
+    npzRegen: a => confirmBox('Регенерация катализатора?', 'Установка остановится на 8 суток.', () => { doAct('regen', { id: a }); }),
+    azsUp: a => { const [id, up] = String(a).split(':'); doAct('azsUp', { id, up }, 'Готово'); render(); },
+    trucks: a => { doAct('ds', { trucks: Number(a) }, 'Парк бензовозов обновлён'); render(); },
+    dsMode: a => { doAct('ds', { mode: a }); render(); },
+    dsSell: a => { doAct('ds', { sell: a }, a === 'season' ? 'Копим продукты до сезона высоких цен' : 'Продажа оптом ежедневно'); render(); },
+    npzTank: a => { const [id, k] = String(a).split(':'); doAct('ds', { tank: id, prod: k }, 'Резервуар переведён'); render(); },
+    shOp: a => { const [op, v] = String(a).split(':'); const pay = { op, pct: v, n: v, amount: v };
+      const txt = { ipo: 'Разместить акции на бирже?', spo: 'Выпустить новые акции? Доверие совета −3.', buyback: 'Выкупить акции с рынка?', dividend: `Выплатить дивиденды ${money(Number(v))}?` }[op];
+      confirmBox(txt, '', () => { if (doAct('shares', pay, op === 'ipo' ? 'Акции размещены!' : 'Готово')) { if (op === 'ipo') { SND.play('fanfare'); confetti(); } } render(); }); },
+    shBuy: a => { const c = s.companies[Number(a)]; if (!c) return; const n = Math.floor(100e6 * idx() / E.compPrice(c)); doAct('shares', { op: 'trade', name: c.name, n }, `Куплено ${num(n)} акций`); render(); },
+    shSell: a => { const c = s.companies[Number(a)]; if (!c || !s.port[c.name]) return; doAct('shares', { op: 'trade', name: c.name, n: -s.port[c.name].qty }, 'Акции проданы'); render(); },
     gwell: a => { const [id, op] = String(a).split(':'); doAct('gwell', { id, op }, { open: 'Расконсервация начата (10 сут)', repair: 'Ремонтная бригада выехала', stop: 'Скважина остановлена', start: 'Скважина пущена' }[op]); render(); },
-    tender: a => { const r = doAct('tender', { type: a }); if (r) tenderModal(); else render(); },
+    tender: a => { const [ty, pu] = String(a).split(':'); const r = doAct('tender', { type: ty, purpose: pu }); if (r) tenderModal(); else render(); },
     award: a => {
       const pur = document.getElementById('f-purpose'), cd = document.getElementById('f-cdng');
       if (pur) s.tender.purpose = pur.value;
@@ -1378,6 +1694,8 @@
       <li><b>Подготовка нефти.</b> Скважины → АГЗУ → УПСВ → РВС → печи → товарные РВС. Узкое место ограничивает добычу.</li>
       <li><b>ЦДПиТГ.</b> Газ: УППГ для газовых скважин, МКС для попутного газа. Факел — штрафы.</li>
       <li><b>Сбыт.</b> Нефть продаётся по договорам — заключите первый в первые недели.</li>
+      <li><b>НПЗ и АЗС.</b> Свой НПЗ перерабатывает нефть в бензин, дизель и мазут, АЗС продают топливо в розницу.</li>
+      <li><b>Акции.</b> IPO приносит деньги, дивиденды — доверие совета. Можно покупать акции других компаний.</li>
       <li><b>Качество.</b> Температура печей и деэмульгатор: I группа — полная цена.</li>
       <li><b>Ремонты.</b> ПРС чинят скважины при наличии материалов. Включите автозакупку.</li>
       <li><b>Пласт.</b> Закачивайте воду, иначе падают давление и дебиты.</li>
@@ -1412,6 +1730,11 @@
     if (k === 'dose') { document.getElementById('dv').textContent = v + '%'; previewQ(s.ckppnSet.temp, v / 100); }
     if (k === 'comp') document.getElementById('compv').textContent = v + '%';
     if (k === 'deg') document.getElementById('degv').textContent = v + ' л/ч';
+    if (k === 'feed') document.getElementById('feedv').textContent = v + ' т/сут';
+    if (['elT', 't1', 'tr', 'th', 'tf'].includes(k)) document.getElementById(k + 'v').textContent = v + '°C';
+    if (k === 'wash') document.getElementById('washv').textContent = v + '%';
+    if (k === 'res') document.getElementById('resv').textContent = v + ' сут';
+    if (k === 'mkp') document.getElementById('mkpv').textContent = (v > 0 ? '+' : '') + v + '%';
     if (k === 'reg') { document.getElementById('regv').textContent = v + '°C'; const c = Math.max(70, Math.min(96, 87 + (v - 155) * 0.45)); const el = document.getElementById('concv'); if (el) { el.textContent = num(c, 1) + '%'; el.className = c < 87 ? 'tbad' : 'tgood'; } }
     if (k === 'reserve') document.getElementById('resv').textContent = v + '%';
     if (k === 'vol') document.getElementById('volv').textContent = v + '%';
@@ -1435,6 +1758,12 @@
     else if (k === 'wash') doAct('ckppn', { wash: el.checked });
     else if (k === 'comp') doAct('ppd', { comp: el.value });
     else if (k === 'deg') doAct('gasSet', { deg: el.value });
+    else if (k === 'feed') doAct('ds', { feed: el.value });
+    else if (['elT', 't1', 'tr', 'th', 'tf', 'wash'].includes(k)) { doAct('np', { [k]: el.value }); render(); }
+    else if (k === 'npbit') { doAct('np', { bit: el.checked }); render(); }
+    else if (k === 'res') doAct('ds', { res: el.value });
+    else if (k === 'mkp') doAct('ds', { mkp: el.value });
+    else if (k === 'dsbuy') doAct('ds', { buy: el.checked });
     else if (k === 'reg') doAct('gasSet', { reg: el.value });
     else if (k === 'reserve') doAct('ppd', { reserve: el.value });
     else if (k === 'sal') doAct('salary', { role: el.dataset.role, pct: parseInt(el.value) });

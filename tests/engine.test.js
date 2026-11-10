@@ -499,4 +499,99 @@ test('ЦДПиТГ: УППГ, расконсервация газовых скв
   assert.ok(s.today.energy.items['УППГ'] > 0, 'УППГ потребляет энергию');
 });
 
+test('НПЗ: материальный баланс, ЭЛОУ, печь, риформинг, гидроочистка, вакуум и крекинг', () => {
+  const s = fresh(); for (const o of s.offers.slice()) try { E.act(s, 'accept', { id: o.id }); } catch (e) { }
+  s.cash = 3e10;
+  assert.throws(() => E.act(s, 'tender', { type: 'npz_ref' }), /Сначала постройте/);
+  E.act(s, 'tender', { type: 'npz' }); E.act(s, 'award', { i: 0 });
+  for (let i = 0; i < 260 && !E.facs(s, 'npz').length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.trust = 70; E.advance(s, 1); }
+  assert.ok(E.facs(s, 'npz').length === 1, 'НПЗ построен');
+  const cov = E.coverage(s);
+  const bal = R => R.out.ai + R.out.dt + R.out.mz + R.side.naf + R.side.lpg + R.side.vgo + R.side.bit + R.loss;
+  let R = E.npzCalc(s, 300, cov);
+  assert.ok(Math.abs(bal(R) - 300) < 1e-6, 'материальный баланс сходится: ' + bal(R));
+  assert.ok(R.out.ai === 0 && R.side.naf > 40, 'без риформинга бензина нет — продаём нафту');
+  assert.ok(R.sul > 2000 && E.sulClass(R.sul) === 'К2', 'прямогонный дизель сернистый');
+  s.np.elT = 100; s.np.wash = 0; const bad = E.npzCalc(s, 300, cov); s.np.elT = 135; s.np.wash = 8; const good = E.npzCalc(s, 300, cov);
+  assert.ok(bad.saltOut > good.saltOut && good.saltOut <= 3 && bad.corr > 1, 'ЭЛОУ: температура и промывка снижают соли');
+  s.np.t1 = 345; const lo = E.npzCalc(s, 300, cov); s.np.t1 = 370; const hi = E.npzCalc(s, 300, cov); s.np.t1 = 355;
+  assert.ok(hi.out.dt > lo.out.dt && hi.coke > 0 && lo.coke === 0, 'печь: выше температура — больше светлых, но коксование');
+  const add = type => s.fac.push({ id: 900000 + s.fac.length, type, name: E.FUEL ? type : type, cap: OMData.BUILD[type].cap, health: 100, status: 'ok', book: 0 });
+  add('npz_ref'); add('npz_hdo');
+  s.np.tr = 485; const r1 = E.npzCalc(s, 300, cov); s.np.tr = 510; const r2 = E.npzCalc(s, 300, cov); s.np.tr = 495;
+  assert.ok(r2.ronR > r1.ronR && r2.out.ai < r1.out.ai, 'риформинг: жёстче режим — выше ОЧ, ниже выход');
+  s.np.th = 340; const h1 = E.npzCalc(s, 300, cov); s.np.th = 365; const h2 = E.npzCalc(s, 300, cov);
+  assert.ok(h2.sul < h1.sul && h2.sul <= 50, 'гидроочистка снижает серу: ' + h2.sul);
+  const dep0 = E.npzCalc(s, 300, cov).depth, n0 = E.nelson(s);
+  add('npz_vac'); add('npz_fcc');
+  const deep = E.npzCalc(s, 300, cov);
+  assert.ok(deep.depth > dep0 + 0.1 && deep.side.lpg > 0 && E.nelson(s) > n0 + 2, 'крекинг углубляет переработку');
+  assert.ok(Math.abs(bal(deep) - 300) < 1e-6, 'баланс с крекингом');
+  for (const t of E.tanks(s, 'oil')) t.volume = t.cap * 0.8;
+  const a0 = s.cat.rf; E.act(s, 'np', { tr: 515 }); E.advance(s, 20);
+  assert.ok(s.cat.rf < a0, 'катализатор риформинга стареет');
+  assert.ok(s.today.ds.feed > 0 && s.prodStock.ai >= 0 && s.prodQ.ron > 85, 'бензин в парке');
+  const rf = E.facs(s, 'npz_ref')[0]; E.act(s, 'regen', { id: rf.id }); E.advance(s, 9);
+  assert.ok(s.cat.rf > 0.9, 'регенерация восстановила активность');
+  assert.ok(s.today.energy.items['НПЗ'] > 0, 'НПЗ потребляет энергию');
+});
+
+test('АЗС: машины, колонки, резервуары станций, бензовозы, магазин', () => {
+  const s = fresh(); s.cash = 3e10;
+  E.act(s, 'tender', { type: 'azs', purpose: 'city' }); assert.ok(s.tender.title.includes('город')); E.act(s, 'award', { i: 0 });
+  E.act(s, 'tender', { type: 'azs', purpose: 'village' }); E.act(s, 'award', { i: 0 });
+  for (let i = 0; i < 120 && E.facs(s, 'azs').length < 2; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.trust = 70; E.advance(s, 1); }
+  assert.ok(E.facs(s, 'azs').length === 2);
+  E.advance(s, 3);
+  const a = E.facs(s, 'azs').find(f => f.loc === 'city'), b = E.facs(s, 'azs').find(f => f.loc === 'village');
+  assert.ok(a.tk.ai > 0 && a.st.served > b.st.served, 'город продаёт больше посёлка, резервуары заполнены бензовозами');
+  const cov = E.coverage(s); const c0 = E.azsCars(s, a, cov); E.act(s, 'ds', { mkp: 10 }); assert.ok(E.azsCars(s, a, cov) < c0, 'дороже — меньше машин'); E.act(s, 'ds', { mkp: 0 });
+  a.trk = 1; E.advance(s, 1); assert.ok(a.st.queue > 0, 'мало колонок — очередь');
+  E.act(s, 'azsUp', { id: a.id, up: 'trk' }); E.act(s, 'azsUp', { id: a.id, up: 'cafe' });
+  assert.ok(a.trk === 3 && a.cafe && E.coverage(s).need.azsop === 10, 'улучшения и персонал кафе');
+  assert.ok(s.ledger.some(l => l.note === 'Наёмные бензовозы'), 'без своих бензовозов — наёмные');
+  E.act(s, 'ds', { trucks: 3 }); assert.ok(E.truckCap(s) === 132);
+  let hired = 0, deliv = 0; for (let i = 0; i < 10; i++) { E.advance(s, 1); hired += s.today.ds.hired; deliv += s.today.ds.deliv; }
+  assert.ok(deliv > 0 && hired === 0, 'свои бензовозы возят всё');
+  E.act(s, 'ds', { buy: false }); let dry = 0; for (let i = 0; i < 40; i++) { E.advance(s, 1); dry += s.today.ds.dry; }
+  assert.ok(dry > 0, 'без топлива станции пустеют');
+});
+
+test('Акции: IPO, дивиденды, выкуп, допэмиссия, портфель', () => {
+  const s = fresh();
+  assert.throws(() => E.act(s, 'shares', { op: 'ipo', pct: 20 }), /капитализация/);
+  s.cash = 4e10;
+  const t0 = s.trust, c0 = s.cash;
+  E.act(s, 'shares', { op: 'ipo', pct: 20 });
+  assert.ok(s.sh.listed && s.cash > c0 && s.trust > t0 && Math.abs(s.sh.float - 20 / 120) < 1e-9, 'IPO привлекло деньги');
+  assert.throws(() => E.act(s, 'shares', { op: 'spo', pct: 10 }), /раза в год/);
+  E.advance(s, 5); assert.ok(s.sh.price > 0);
+  const tr = s.trust; E.act(s, 'shares', { op: 'dividend', amount: 1e9 }); assert.ok(s.trust >= tr);
+  assert.throws(() => E.act(s, 'shares', { op: 'dividend', amount: 1e9 }), /квартал/);
+  E.act(s, 'shares', { op: 'buyback', n: 1e6 }); assert.ok(s.sh.treasury === 1e6);
+  const c = s.companies[0]; E.act(s, 'shares', { op: 'trade', name: c.name, n: 1000 });
+  assert.ok(s.port[c.name].qty === 1000 && E.portValue(s) > 0);
+  E.act(s, 'shares', { op: 'trade', name: c.name, n: -1000 }); assert.ok(!s.port[c.name]);
+  const s2 = JSON.parse(JSON.stringify(s)); s2.sh.lastIssue -= 400; const tot = s2.sh.total; E.act(s2, 'shares', { op: 'spo', pct: 10 }); assert.ok(s2.sh.total > tot);
+});
+
+test('РВС НПЗ: строительство увеличивает парк, сезонное хранение, перевод под другой продукт', () => {
+  const s = fresh(); s.cash = 3e10;
+  assert.throws(() => E.act(s, 'tender', { type: 'npz_rvs', purpose: 'dt' }), /Сначала постройте/);
+  E.act(s, 'tender', { type: 'npz' }); E.act(s, 'award', { i: 0 });
+  for (let i = 0; i < 260 && !E.facs(s, 'npz').length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.trust = 70; E.advance(s, 1); }
+  const c0 = E.prodCapK(s, 'dt'), a0 = E.prodCapK(s, 'ai');
+  E.act(s, 'tender', { type: 'npz_rvs10', purpose: 'dt' }); assert.ok(s.tender.title.includes('дизель')); E.act(s, 'award', { i: 0 });
+  for (let i = 0; i < 160 && !E.ptanks(s).length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.trust = 70; E.advance(s, 1); }
+  const f = E.ptanks(s)[0]; assert.ok(f && f.prod === 'dt');
+  assert.ok(E.prodCapK(s, 'dt') > c0 + 9000 && E.prodCapK(s, 'ai') === a0, 'парк дизеля вырос на 10 000 т');
+  // сезонная политика: летом дизель копится
+  s.day = E.parts ? s.day : s.day; E.act(s, 'ds', { sell: 'season' });
+  const d = Object.assign({}, s); // проверяем через функцию
+  const summer = JSON.parse(JSON.stringify(s)); while (OMEngine.parts(summer.day).m !== 7) summer.day++;
+  assert.ok(E.holdK(summer, 'dt') && !E.holdK(summer, 'ai'), 'летом копим дизель, бензин продаём');
+  s.prodStock.dt = 0; E.act(s, 'ds', { tank: f.id, prod: 'mz' }); assert.ok(f.prod === 'mz' && E.prodCapK(s, 'mz') > 12000);
+  s.prodStock.mz = E.prodCapK(s, 'mz'); assert.throws(() => E.act(s, 'ds', { tank: f.id, prod: 'ai' }), /освободите/);
+});
+
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ', есть ошибки' : ''}`);

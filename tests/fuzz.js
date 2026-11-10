@@ -9,7 +9,7 @@ const problems = new Map();
 function bad(key, msg) { if (!problems.has(key)) problems.set(key, { n: 0, msg }); problems.get(key).n++; }
 let rs = 1; const r = () => { rs = (rs * 1103515245 + 12345) % 2147483648; return rs / 2147483648; };
 const pick = a => a[Math.floor(r() * a.length)];
-const tryA = (s, t, a) => { try { return E.act(s, t, a); } catch (e) { if (!/недостат|нет |Не хват|уже|только|занят|лимит|не найден|не требует|Выберите|Все бригады|Требуется|доступно|заполнены|Нельзя|пуст|Некуда|качество|столько|не ниже|Сначала|полгода|квалификац|Высший|раз в|ЦДНГ|Неизвест|план|от |Неверн|Покупатель|Спот|Автоналив|Некондиц|В товарных|Цех|решение|Вакансия|Должность|кандидат|Новый начальник|выходит|Для РВС|в ремонте|на обслуживании|запчаст|слесар|дни|последн|учения|медосмотр|обучение|Скважина не|Ремонт не нужен|УППГ/i.test(e.message)) bad('act:' + t + ':' + e.message.slice(0, 50), e.stack.split('\n').slice(0, 3).join(' ')); return null; } };
+const tryA = (s, t, a) => { try { return E.act(s, t, a); } catch (e) { if (!/недостат|нет |Не хват|уже|только|занят|лимит|не найден|не требует|Выберите|Все бригады|Требуется|доступно|заполнены|Нельзя|пуст|Некуда|качество|столько|не ниже|Сначала|полгода|квалификац|Высший|раз в|ЦДНГ|Неизвест|план|от |Неверн|Покупатель|Спот|Автоналив|Некондиц|В товарных|Цех|решение|Вакансия|Должность|кандидат|Новый начальник|выходит|Для РВС|в ремонте|на обслуживании|запчаст|слесар|дни|последн|учения|медосмотр|обучение|Скважина не|Ремонт не нужен|УППГ|Сначала|IPO|акци|дивиденд|казначейск|не чаще|Укажите|Компания не|50%|допэмисс|Наценка|Загрузка НПЗ|Запас для АЗС|режим|освободите|Неверн|Резервуар|Регенерация|Максимум|Уже есть|Установка|Бензовоз|АЗС не|Температура|Промывочная|улучшение/i.test(e.message)) bad('act:' + t + ':' + e.message.slice(0, 50), e.stack.split('\n').slice(0, 3).join(' ')); return null; } };
 
 function check(s, ctx) {
   const fin = (v, n) => { if (!Number.isFinite(v)) bad('nan:' + n, `${n}=${v} @${ctx}`); };
@@ -40,6 +40,13 @@ function check(s, ctx) {
   if (s.today && s.today.gas) { const g = s.today.gas; fin(g.nat, 'nat'); if (g.natSale < -1e-6 || Math.abs(g.nat - g.boiler - g.gtesN - g.natSale) > 1e-3) bad('natgas-balance', `${g.nat} ${g.boiler} ${g.gtesN} ${g.natSale} @${ctx}`); if (Math.abs(g.prod - g.heat - g.gtes - g.sale - g.flare) > 1e-3) bad('png-balance', `@${ctx}`); }
   for (const w of s.gwells) { fin(w.q, 'gq'); fin(w.health, 'gh'); fin(w.cum, 'gcum'); if (!['work', 'idle', 'prep', 'repair', 'fail', 'stop'].includes(w.status)) bad('gw-status', w.status); }
   fin(s.gasRes.remaining, 'gasres');
+  for (const k of ['ai', 'dt', 'mz']) { fin(s.prodStock[k], 'prod' + k); if (s.prodStock[k] < -1e-6) bad('prod-neg', k + ' ' + s.prodStock[k]); }
+  for (const k of ['ai', 'dt', 'mz']) if (s.prodStock[k] > E.prodCapK(s, k) + Math.max(1, (s.today && s.today.ds && s.today.ds.dem ? s.today.ds.dem[k] || 0 : 0) * 31) + 1) bad('prod-cap', k + ' ' + s.prodStock[k] + ' / ' + E.prodCapK(s, k));
+  for (const f of s.fac) if (f.type === 'azs' && f.tk) for (const k of ['ai', 'dt']) { fin(f.tk[k], 'aztk'); if (f.tk[k] < -1e-6 || f.tk[k] > f.tkCap[k] + 1e-6) bad('azs-tank', k + ' ' + f.tk[k] + '/' + f.tkCap[k]); }
+  fin(s.prodQ.ron, 'ron'); fin(s.prodQ.sul, 'sul'); fin(s.cat.rf, 'catrf'); fin(s.cat.hdo, 'cathdo');
+  if (s.today && s.today.ds && s.today.ds.calc) { const R = s.today.ds.calc; const b = R.out.ai + R.out.dt + R.out.mz + R.side.naf + R.side.lpg + R.side.vgo + R.side.bit + R.loss; if (Math.abs(b - R.F) > 1e-6 * Math.max(1, R.F)) bad('npz-balance', b + ' vs ' + R.F); }
+  fin(s.sh.price, 'shprice'); fin(s.sh.sent, 'sent'); if (s.sh.float < 0 || s.sh.float > 1 || s.sh.treasury < 0) bad('shares', JSON.stringify(s.sh).slice(0, 200));
+  for (const n in s.port) if (!(s.port[n].qty > 0)) bad('port', n);
   for (const p of s.people) if (p.sickUntil != null && !Number.isFinite(p.sickUntil)) bad('sick-nan', p.name);
   const y = E.parts(s.day).y, PF = s.pf[y];
   if (PF) for (const c of s.cdngs) { const m = PF.plan.reduce((a, mo) => a + (mo[c.id] || 0), 0); if (PF.annual[c.id] != null && Math.abs(m - PF.annual[c.id]) > 1 + PF.annual[c.id] * 1e-6) bad('plan-sum', `${c.name} ${m} vs ${PF.annual[c.id]} @${ctx}`); }
@@ -79,6 +86,10 @@ for (let g = 0; g < GAMES; g++) {
         else if (a === 7) tryA(s, 'ckppn', { temp: 40 + Math.floor(r() * 40), dose: r() * 2, wash: r() < 0.3 });
         else if (a === 8 && r() < 0.5) tryA(s, 'ppd', { comp: Math.floor(r() * 150), reserve: Math.floor(r() * 80) });
         else if (a === 8) { tryA(s, 'gasSet', { deg: 15 + Math.floor(r() * 35), reg: 140 + Math.floor(r() * 35) }); const gw = pick(s.gwells); if (gw) tryA(s, 'gwell', { id: gw.id, op: pick(['open', 'repair', 'stop', 'start']) }); }
+        else if (a === 9 && r() < 0.5) { tryA(s, 'ds', { feed: Math.floor(r() * 600), sell: pick(['daily', 'season']), mode: pick(['ai', 'dt', 'bal']), mkp: Math.floor(r() * 25) - 10, res: Math.floor(r() * 20), buy: r() < 0.7 }); if (r() < 0.2) tryA(s, 'tender', { type: pick(['npz', 'npz_rvs', 'npz_rvs10']), purpose: pick(['ai', 'dt', 'mz']) }) && tryA(s, 'award', { i: 0 }); { const pt = E.ptanks(s); if (pt.length && r() < 0.2) tryA(s, 'ds', { tank: pick(pt).id, prod: pick(['ai', 'dt', 'mz']) }); }
+          if (r() < 0.3) tryA(s, 'tender', { type: 'azs', purpose: pick(['city', 'road', 'village']) }) && tryA(s, 'award', { i: 0 }); }
+        else if (a === 9 && r() < 0.4) { tryA(s, 'np', { elT: 90 + Math.floor(r() * 60), wash: Math.floor(r() * 12), t1: 330 + Math.floor(r() * 50), tr: 470 + Math.floor(r() * 55), th: 320 + Math.floor(r() * 70), tf: 490 + Math.floor(r() * 50), bit: r() < 0.5 }); if (r() < 0.3) tryA(s, 'tender', { type: pick(['npz_vac', 'npz_ref', 'npz_hdo', 'npz_fcc', 'npz_bit']) }) && tryA(s, 'award', { i: 0 }); const u = pick(s.fac.filter(f => f.type === 'npz_ref' || f.type === 'npz_hdo')); if (u && r() < 0.2) tryA(s, 'regen', { id: u.id }); const z = pick(s.fac.filter(f => f.type === 'azs')); if (z) tryA(s, 'azsUp', { id: z.id, up: pick(['trk', 'cafe', 'wash', 'tank']) }); if (r() < 0.2) tryA(s, 'ds', { trucks: Math.floor(r() * 5) }); }
+        else if (a === 9 && r() < 0.5) { const op = pick(['ipo', 'spo', 'buyback', 'dividend', 'trade']); const c = pick(s.companies); tryA(s, 'shares', { op, pct: 5 + Math.floor(r() * 35), n: Math.floor((r() - 0.4) * 1e6), amount: Math.floor(r() * 1e9), name: c && c.name }); }
         else if (a === 9) tryA(s, 'deposit', { amount: 1e7 });
         else if (a === 10 && s.deposits.length) tryA(s, 'withdraw', { id: pick(s.deposits).id });
         else if (a === 11 && s.people.length) tryA(s, 'person', { id: pick(s.people).id, op: pick(['grade', 'bonus', 'train', 'fire']) });
