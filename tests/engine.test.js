@@ -507,7 +507,7 @@ test('НПЗ: материальный баланс, ЭЛОУ, печь, риф�
   for (let i = 0; i < 260 && !E.facs(s, 'npz').length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.trust = 70; E.advance(s, 1); }
   assert.ok(E.facs(s, 'npz').length === 1, 'НПЗ построен');
   const cov = E.coverage(s);
-  const bal = R => R.out.ai + R.out.dt + R.out.mz + R.side.naf + R.side.lpg + R.side.vgo + R.side.bit + R.loss;
+  const bal = R => Object.values(R.out).reduce((a, b) => a + b, 0) + R.side.naf + R.side.lpg + R.side.vgo + R.side.bit + R.loss;
   let R = E.npzCalc(s, 300, cov);
   assert.ok(Math.abs(bal(R) - 300) < 1e-6, 'материальный баланс сходится: ' + bal(R));
   assert.ok(R.out.ai === 0 && R.side.naf > 40, 'без риформинга бензина нет — продаём нафту');
@@ -592,6 +592,48 @@ test('РВС НПЗ: строительство увеличивает парк,
   assert.ok(E.holdK(summer, 'dt') && !E.holdK(summer, 'ai'), 'летом копим дизель, бензин продаём');
   s.prodStock.dt = 0; E.act(s, 'ds', { tank: f.id, prod: 'mz' }); assert.ok(f.prod === 'mz' && E.prodCapK(s, 'mz') > 12000);
   s.prodStock.mz = E.prodCapK(s, 'mz'); assert.throws(() => E.act(s, 'ds', { tank: f.id, prod: 'ai' }), /освободите/);
+});
+
+test('Компаундирование АИ-92/95/98, задвижки, ремонт НПЗ', () => {
+  const b1 = E.blend(100, 97, 0.35, 0.05); assert.ok(Math.abs(b1.a98 - 5) < 1e-9 && Math.abs(b1.a95 - 35) < 1e-9 && b1.r92 >= 92, 'хватает октана');
+  const b2 = E.blend(100, 93, 0.35, 0.05); assert.ok(b2.a98 === 5 && b2.a95 < 35 && Math.abs(b2.ai + b2.a95 + b2.a98 - 100) < 1e-9, 'мало октана — меньше премиальных марок');
+  const b3 = E.blend(100, 88, 0.35, 0.05); assert.ok(b3.ai === 100 && b3.r92 === 88, 'ниже 92 — всё в АИ-80');
+  const s = fresh(); for (const o of s.offers.slice()) try { E.act(s, 'accept', { id: o.id }); } catch (e) { }
+  s.cash = 3e10;
+  E.act(s, 'tender', { type: 'npz' }); E.act(s, 'award', { i: 0 });
+  for (let i = 0; i < 260 && !E.facs(s, 'npz').length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.trust = 70; E.advance(s, 1); }
+  s.fac.push({ id: 990001, type: 'npz_ref', name: 'Риформинг', cap: 90, health: 100, status: 'ok', book: 0 });
+  for (const t of E.tanks(s, 'oil')) t.volume = t.cap * 0.8;
+  E.act(s, 'np', { g95: 40, g98: 10 }); E.advance(s, 1);
+  const R = s.today.ds.calc; assert.ok(R.out.a95 > 0 && R.out.a98 > 0, 'выпускаем АИ-95 и АИ-98');
+  assert.throws(() => E.act(s, 'np', { g95: 70, g98: 30 }), /90%/);
+  // задвижка дизеля закрыта — дизель копится
+  E.act(s, 'np', { valve: 'dt' }); assert.ok(!E.valveOpen(s, 'dt'));
+  const dt0 = s.prodStock.dt; E.advance(s, 2); assert.ok(s.prodStock.dt > dt0 && s.today.ds.whole.dt === 0, 'дизель не отгружается');
+  E.act(s, 'np', { valve: 'dt' }); E.advance(s, 1); assert.ok(s.today.ds.whole.dt > 0, 'открыли — отгрузка пошла');
+  E.act(s, 'np', { valve: 'bit' }); assert.ok(s.np.bit === false, 'задвижка битума');
+  // ремонт
+  const f = E.facs(s, 'npz')[0]; f.health = 30; const c0 = s.cash;
+  E.act(s, 'fixfac', { id: f.id, kind: 'tr' }); assert.ok(f.status === 'service' && f.health === 60 && s.cash < c0, 'текущий ремонт');
+  assert.throws(() => E.act(s, 'fixfac', { id: f.id, kind: 'kr' }), /уже в ремонте/);
+  E.advance(s, 5); assert.ok(f.status === 'ok', 'после ремонта в работе');
+  f.health = 20; E.act(s, 'fixfac', { id: f.id, kind: 'kr' }); assert.ok(f.health === 100 && f.serviceDays === 20, 'капремонт');
+});
+
+test('АЗС: три марки бензина, финансы станции, ремонт', () => {
+  const s = fresh(); s.cash = 3e10;
+  E.act(s, 'tender', { type: 'azs', purpose: 'city' }); E.act(s, 'award', { i: 0 });
+  for (let i = 0; i < 120 && !E.facs(s, 'azs').length; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); s.trust = 70; E.advance(s, 1); }
+  E.advance(s, 5);
+  const f = E.facs(s, 'azs')[0];
+  assert.ok(f.loc === 'city' && f.st.l > 0 && f.fin.m.l.a95 > 0 && f.fin.m.l.a98 > 0, 'продаёт 92/95/98 и ДТ');
+  assert.ok(E.retailPrice(s, 'a98') > E.retailPrice(s, 'a95') && E.retailPrice(s, 'a95') > E.retailPrice(s, 'ai'), 'цены 98 > 95 > 92');
+  const st = f.st; assert.ok(Math.abs(st.ebitda - (st.rev - st.cogs - st.exc + st.shop - st.opex - st.staff - st.dcost)) < 1e-6, 'EBITDA станции');
+  for (let i = 0; i < 40; i++) { while (s.pending) E.act(s, 'resolve', { i: 0 }); E.advance(s, 1); }
+  while (s.pending) E.act(s, 'resolve', { i: 0 });
+  assert.ok(s.azsHist.length >= 1 && s.azsHist[s.azsHist.length - 1].rev > 0 && f.fin.prev, 'месячный отчёт АЗС');
+  f.health = 30; E.act(s, 'fixfac', { id: f.id, kind: 'tr' }); assert.ok(f.status === 'service');
+  E.advance(s, 1); assert.ok(f.st.served === 0, 'на ремонте АЗС закрыта'); while (s.pending) E.act(s, 'resolve', { i: 0 }); E.advance(s, 1); assert.ok(f.status === 'ok');
 });
 
 console.log(`\n${passed} тестов пройдено${process.exitCode ? ', есть ошибки' : ''}`);

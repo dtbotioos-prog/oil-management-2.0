@@ -76,7 +76,7 @@
     npz_bit:  { name: 'Битумная установка',           cat: 'build', cost: 0.35e9, days: 60, kw: 90,  icon: 'npz', cap: 70,  req: 'npz_vac', desc: 'Гудрон → дорожный битум. Летом дорого, зимой дёшево.' },
     npz_rvs:  { name: 'РВС НПЗ 3 000 т',              cat: 'build', cost: 140e6, days: 40,  kw: 3,   icon: 'ckppn', need: 'npz', ptank: 3000, desc: 'Резервуар для бензина, дизеля или мазута: +3 000 т.' },
     npz_rvs10:{ name: 'РВС НПЗ 10 000 т',             cat: 'build', cost: 380e6, days: 70,  kw: 6,   icon: 'ckppn', need: 'npz', ptank: 10000, desc: 'Большой резервуар продуктов: +10 000 т.' },
-    azs:      { name: 'АЗС',                          cat: 'build', cost: 60e6,  days: 45,  kw: 15,  icon: 'azs', desc: 'Розница бензина и дизеля. Место влияет на продажи.' },
+    azs:      { name: 'АЗС',                          cat: 'build', cost: 45e6,  days: 45,  kw: 15,  icon: 'azs', desc: 'Розница бензина и дизеля. Место влияет на продажи.' },
     well_gas: { name: 'Газовая скважина',             cat: 'drill', cost: 130e6, days: 40, kw: 0,   icon: 'gas', desc: 'Природный газ 25–55 тыс. м³/сут. Работает только через УППГ.' },
     cdng:     { name: 'Новый цех добычи (ЦДНГ)',       cat: 'build', cost: 80e6,  days: 30, kw: 20, icon: 'cdng', cap: 40, desc: 'Открывает новый ЦДНГ — до 40 скважин на цех.' }
   };

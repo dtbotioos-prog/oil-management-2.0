@@ -160,7 +160,7 @@
       ${o.fail ? '<circle cx="76" cy="12" r="7" fill="#e66767"/><text x="76" y="15.5" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">!</text>' : ''}
     </svg>`;
   }
-  const TANK_COL = { oil: ['#3a2a16', '#c98500'], tech: ['#5a3a1e', '#d95926'], water: ['#123a63', '#3987e5'], ai: ['#1f4a2c', '#3fbf6f'], dt: ['#4a4214', '#d8c13a'], mz: ['#1a1410', '#4a3a2a'] };
+  const TANK_COL = { oil: ['#3a2a16', '#c98500'], tech: ['#5a3a1e', '#d95926'], water: ['#123a63', '#3987e5'], ai: ['#1f4a2c', '#3fbf6f'], a95: ['#164a46', '#2fb3a8'], a98: ['#33285a', '#9b7be0'], dt: ['#4a4214', '#d8c13a'], mz: ['#1a1410', '#4a3a2a'] };
   // Резервуар РВС с уровнем и волной
   function tank(o) {
     const pct = Math.max(0, Math.min(1, o.v / Math.max(1, o.c)));
