@@ -689,7 +689,7 @@
     if (free <= 0) return;
     const cands = s.wells.filter(w => w.status === 'fail' && !s.repairs.some(r => r.well === w.id)).sort((a, b) => (b.potential * (1 - b.wc)) - (a.potential * (1 - a.wc)));
     let n = free;
-    for (const w of cands) { if (n <= 0) break; const m = failMaterials(w); if (!canMaterials(s, m)) continue; takeMaterials(s, m); s.repairs.push({ well: w.id, days: 3 }); w.status = 'repair'; n--; }
+    for (const w of cands) { if (n <= 0) break; const m = failMaterials(w); if (!canMaterials(s, m)) continue; takeMaterials(s, m); s.repairs.push({ well: w.id, days: 3, d0: 3 }); w.status = 'repair'; n--; }
   }
   function autoMaintain(s, cov) {
     if (cov.dept.repair < 0.5) return;
@@ -728,7 +728,7 @@
         const w = makeWell(s, t, pr.cdng, pr.quality);
         w.book = pr.total;
         s.wells.push(w);
-        if (t === 'sk' || t === 'ecn') addWellToPlan(s, w);
+        // план года не меняется до 31 декабря: новая скважина даёт сверхплановую добычу
         log(s, `Скважина ${w.name} (${wellTypeName(t)}) введена в эксплуатацию — ${s.cdngs.find(c => c.id === w.cdng).name}`, 'good');
         if (t === 'sk' || t === 'ecn') s.goalsDone.drill = s.goalsDone.drill || 'pending';
       } else if (pr.type === 'cdng') {
@@ -813,7 +813,7 @@
       if (s.stock[m.key] + inTransit < min) {
         const qty = Math.round(min * 2 - s.stock[m.key] - inTransit);
         const cost = qty * matPrice(s, m.key);
-        if (cost < s.cash * 0.25) { transact(s, -cost, 'Закупка МТР', `Автозакупка: ${m.name} ${fmtNum(qty)} ${m.unit}`); s.orders.push({ key: m.key, qty, days: leadTime(s) }); }
+        if (cost < s.cash * 0.25) { transact(s, -cost, 'Закупка МТР', `Автозакупка: ${m.name} ${fmtNum(qty)} ${m.unit}`); s.orders.push((d => ({ key: m.key, qty, days: d, d0: d }))(leadTime(s))); }
       }
     }
   }
@@ -849,7 +849,7 @@
     return { startDay, endDay, byCdng: out };
   }
   // собственный план игрока: годовой объём по цехам; прошедшие месяцы сохраняются, остаток распределяется по дням
-  function setPlanCustom(s, y, byCdng, total) {
+  function setPlanCustom(s, y, byCdng, total, noBounds) {
     const PF = ensurePF(s, y); const o = yearOutlook(s, y);
     const sp = parts(o.startDay); const span = o.endDay - o.startDay + 1;
     const cur = y === parts(s.day).y;
@@ -864,7 +864,7 @@
     const T = sum(Object.values(want));
     if (T <= 0) throw new Error('План должен быть больше нуля');
     const fullFc = sum(s.cdngs, c => o.byCdng[c.id].fact + o.byCdng[c.id].forecast);
-    if (fullFc > 0 && (T < fullFc * 0.5 || T > fullFc * 2)) throw new Error(`План должен быть от 50% до 200% прогноза (${fmtNum(Math.round(fullFc * 0.5))}–${fmtNum(Math.round(fullFc * 2))} т)`);
+    if (!noBounds && fullFc > 0 && (T < fullFc * 0.5 || T > fullFc * 2)) throw new Error(`План должен быть от 50% до 200% прогноза (${fmtNum(Math.round(fullFc * 0.5))}–${fmtNum(Math.round(fullFc * 2))} т)`);
     for (const c of s.cdngs) {
       // план уже прошедших месяцев (и прошедших дней текущего) остаётся как был
       let past = 0;
@@ -885,7 +885,7 @@
     const total2 = sum(Object.values(PF.annual));
     const ratio = fullFc > 0 ? total2 / fullFc : 1;
     PF.level = ratio >= 1.08 ? 'amb' : ratio >= 0.98 ? 'base' : 'cons';
-    PF.custom = true;
+    PF.custom = true; PF.approved = total2; PF.gtm = 0;
     return { total: total2, level: PF.level, ratio };
   }
   // план ГТМ: ввод новой скважины увеличивает план цеха на оставшиеся месяцы года
@@ -898,15 +898,18 @@
       const days = m === p.m ? daysInMonth(p.y, m) - p.d : daysInMonth(p.y, m);
       const v = rate * days; PF.plan[m - 1][w.cdng] = (PF.plan[m - 1][w.cdng] || 0) + v; add += v;
     }
-    PF.annual[w.cdng] = (PF.annual[w.cdng] || 0) + add;
+    PF.annual[w.cdng] = (PF.annual[w.cdng] || 0) + add; PF.gtm = (PF.gtm || 0) + add;
   }
   const PLAN_LEVELS = { cons: { name: 'Консервативный', k: 0.94, trust: 0 }, base: { name: 'Базовый', k: 1.0, trust: 2 }, amb: { name: 'Амбициозный', k: 1.12, trust: 6 } };
+  // итог плана по уровню — ровно так же, как считает setPlan (чтобы цифры в выборе совпадали с утверждённым планом)
+  function planWindow(s, y) { return { startDay: Math.max(s.day + 1, Math.round((Date.UTC(y, 0, 1) - START) / DAY_MS)), endDay: Math.round((Date.UTC(y, 11, 31) - START) / DAY_MS) }; }
+  function planK(s, level) { return PLAN_LEVELS[level].k * (has(s, 'smart') ? 1.0 : 0.99); }
   function setPlan(s, y, level) {
     const PF = ensurePF(s, y); PF.level = level;
     const startDay = Math.max(s.day + 1, Math.round((Date.UTC(y, 0, 1) - START) / DAY_MS));
     const endDay = Math.round((Date.UTC(y, 11, 31) - START) / DAY_MS);
     const fc = forecastByCdng(s, startDay, endDay);
-    const K = PLAN_LEVELS[level].k * (has(s, 'smart') ? 1.0 : 0.99);
+    const K = planK(s, level);
     const sp = parts(startDay);
     PF.annual = {};
     for (const c of s.cdngs) {
@@ -918,6 +921,7 @@
         PF.plan[m - 1][c.id] = total * dm / span;
       }
     }
+    PF.approved = sum(Object.values(PF.annual)); PF.gtm = 0;
   }
 
   /* ===================== закрытие месяца ===================== */
@@ -1052,12 +1056,13 @@
     s.pending = planEvent(s, y + 1, { y, plan, fact, ratio });
   }
   function planEvent(s, y, rep) {
-    const fc = sum(Object.values(forecastByCdng(s, s.day + 1, s.day + daysInYear(y))));
+    const W = planWindow(s, y), fc = sum(Object.values(forecastByCdng(s, W.startDay, W.endDay)));
     return {
       key: 'plan', title: `Годовой план добычи на ${y} год`,
       text: (rep ? `Итог ${rep.y} года: ${Math.round(rep.ratio * 100)}% плана (${fmtNum(Math.round(rep.fact))} т). ` : '') +
         `Геологическая служба прогнозирует ${fmtNum(Math.round(fc))} т нефти при текущем фонде скважин. Выберите план — амбициозный план даёт больше доверия совета директоров при выполнении, но наказывает при срыве.`,
-      options: Object.entries(PLAN_LEVELS).map(([k, v]) => ({ label: `${v.name}: ${fmtNum(Math.round(fc * v.k))} т`, hint: k === 'cons' ? 'Легко выполнить, мало бонусов' : k === 'base' ? 'Сбалансированно' : 'Бонус доверия +' + (v.trust + 4) + ' при выполнении', data: k }))
+      options: Object.entries(PLAN_LEVELS).map(([k, v]) => ({ label: `${v.name}: ${fmtNum(Math.round(fc * planK(s, k)))} т`, hint: k === 'cons' ? 'Легко выполнить, мало бонусов' : k === 'base' ? 'Сбалансированно' : 'Бонус доверия +' + (v.trust + 4) + ' при выполнении', data: k }))
+          .concat(rep && rep.fact > 0 ? [{ label: `На уровне ${rep.y} года: ${fmtNum(Math.round(rep.fact))} т`, hint: `Факт прошлого года · ${rep.fact >= fc ? '+' : '−'}${Math.abs(Math.round((rep.fact / fc - 1) * 100))}% к прогнозу`, data: 'prev', total: Math.round(rep.fact) }] : [])
         .concat([{ label: 'Задать свой план…', hint: 'Свой объём по каждому ЦДНГ (50–200% прогноза)', data: 'custom', custom: true }]),
       data: { y }
     };
@@ -1348,7 +1353,7 @@
     { key: 'tankfire', w: 5, cond: s => s.fac.some(f => D.BUILD[f.type].tank && f.health < 35 && f.volume > 50),
       make: s => {
         const t = s.fac.filter(f => D.BUILD[f.type].tank && f.health < 35).sort((a, b) => a.health - b.health)[0];
-        const lost = t.volume; t.volume = 0; t.health = 15; t.status = 'service'; t.serviceDays = 30;
+        const lost = t.volume; t.volume = 0; t.health = 15; t.status = 'service'; t.serviceDays = 30; t.serviceD0 = 30;
         const fine = 60e6 * idx(s); transact(s, -fine, 'Штрафы и неустойки', `Пожар/разгерметизация ${t.name}`); s.trust -= 8;
         log(s, `АВАРИЯ: разгерметизация и возгорание ${t.name}! Потеряно ${fmtNum(lost)} т, штраф ${fmtMoney(fine)}, резервуар выведен на 30 дней`, 'bad');
       } },
@@ -1357,7 +1362,7 @@
       resolve: (s, d) => {
         if (!d) return; if (s.cash < d.price) { log(s, 'Сделка сорвалась: недостаточно средств', 'warn'); return; }
         transact(s, -d.price, 'Капвложения', `Покупка участка: ${d.n} скважин`);
-        for (let i = 0; i < d.n; i++) { const c = cdngFree(s); if (!c) break; const w = makeWell(s, 'sk', c.id, 0.6); w.health = ri(s, 45, 75); w.book = d.price / d.n; s.wells.push(w); addWellToPlan(s, w); }
+        for (let i = 0; i < d.n; i++) { const c = cdngFree(s); if (!c) break; const w = makeWell(s, 'sk', c.id, 0.6); w.health = ri(s, 45, 75); w.book = d.price / d.n; s.wells.push(w); }
         log(s, `Куплен участок: +${d.n} скважин. Проверьте АГЗУ, энергию и персонал!`, 'good');
       } },
     { key: 'tax', w: 2, cond: s => coverage(s).dept.aup < 0.85,
@@ -1444,7 +1449,7 @@
         if (m.tech && !has(s, m.tech)) throw new Error('Требуется технология');
         const qty = int(a.qty, 1, 10000000, 'Количество');
         pay(s, qty * matPrice(s, m.key), 'Закупка МТР', `${m.name}: ${fmtNum(qty)} ${m.unit}`);
-        s.orders.push({ key: m.key, qty, days: leadTime(s) }); break;
+        s.orders.push((d => ({ key: m.key, qty, days: d, d0: d }))(leadTime(s))); break;
       }
       case 'toggle': { if (!(a.key in s.auto)) throw new Error('Нет настройки'); s.auto[a.key] = !s.auto[a.key]; break; }
       case 'ckppn': {
@@ -1573,7 +1578,7 @@
         if (['anticor', 'clean'].includes(T.type)) {
           const t = s.fac.find(f => f.id === T.target);
           if (t.volume > 1) { const moved = fillTanksExcept(s, t, t.volume); if (moved + 1e-6 < t.volume) { transact(s, pr.paid, 'Подрядные работы', 'Возврат аванса'); throw new Error('Некуда перекачать содержимое резервуара — освободите место в других РВС того же назначения'); } t.volume = 0; }
-          t.status = 'service'; t.serviceDays = o.days;
+          t.status = 'service'; t.serviceDays = o.days; t.serviceD0 = o.days;
         }
         s.projects.push(pr); s.tender = null;
         log(s, `Заключён договор подряда: ${pr.title} — ${o.name}, ${o.days} дн.`, 'info'); break;
@@ -1589,7 +1594,7 @@
         const w = s.wells.find(x => x.id === Number(a.id)); if (!w || w.status !== 'fail') throw new Error('Скважина не требует ПРС');
         if (brigades(s) - s.repairs.length <= 0) throw new Error('Все бригады ПРС заняты. Наймите рабочих ПРС (4 чел. = бригада) или вызовите подрядчика');
         const m = failMaterials(w); if (!canMaterials(s, m)) throw new Error('Не хватает материалов: ' + Object.entries(m).map(([k, v]) => `${matName(k)} ×${v}`).join(', '));
-        takeMaterials(s, m); s.repairs.push({ well: w.id, days: 3 }); w.status = 'repair'; break;
+        takeMaterials(s, m); s.repairs.push({ well: w.id, days: 3, d0: 3 }); w.status = 'repair'; break;
       }
       case 'wellToggle': {
         const w = s.wells.find(x => x.id === Number(a.id)); if (!w) throw new Error('Скважина не найдена');
@@ -1679,7 +1684,8 @@
         const opt = ev.options[int(a.i, 0, ev.options.length - 1)];
         s.pending = null;
         if (ev.key === 'plan' && opt.data === 'custom') { s.pending = ev; throw new Error('Для своего плана используйте форму ввода'); }
-        if (ev.key === 'plan') { setPlan(s, ev.data.y, opt.data); log(s, `Утверждён план на ${ev.data.y} год: ${PLAN_LEVELS[opt.data].name.toLowerCase()}`, 'info'); }
+        if (ev.key === 'plan' && opt.data === 'prev') { const r = setPlanCustom(s, ev.data.y, {}, opt.total, true); ensurePF(s, ev.data.y).custom = false; ensurePF(s, ev.data.y).prev = true; log(s, `Утверждён план на ${ev.data.y} год на уровне прошлого года: ${fmtNum(Math.round(r.total))} т`, 'info'); }
+        else if (ev.key === 'plan') { setPlan(s, ev.data.y, opt.data); log(s, `Утверждён план на ${ev.data.y} год: ${PLAN_LEVELS[opt.data].name.toLowerCase()}`, 'info'); }
         else { const e = EVENTS.find(x => x.key === ev.key); if (e && e.resolve) e.resolve(s, opt.data); }
         s.trust = clamp(s.trust, 0, 100); s.morale = clamp(s.morale, 0, 100);
         break;
@@ -1921,7 +1927,7 @@
       if (c.status === 'fail') throw new Error('Сначала ремонт');
       if (s.stock.vparts < 1) throw new Error('Нет запчастей автотехники на складе');
       pay(s, vehCost.to * i, 'Автотранспорт', `ТО: ${c.name}`); s.stock.vparts -= 1;
-      c.to = s.day + 90; c.chto = s.day + 30; c.health = Math.min(100, c.health + 15); c.status = 'repair'; c.down = 1; return;
+      c.to = s.day + 90; c.chto = s.day + 30; c.health = Math.min(100, c.health + 15); c.status = 'repair'; c.down = 1; c.down0 = 1; return;
     }
     if (op === 'pto') {
       if (c.status === 'fail') throw new Error('Сначала ремонт');
@@ -1932,7 +1938,7 @@
     if (op === 'repair') {
       if (c.status !== 'fail') throw new Error('Ремонт не нужен');
       if (s.stock.vparts < 2) throw new Error('Нужно 2 комплекта запчастей');
-      pay(s, vehCost.repair * i, 'Автотранспорт', `Ремонт: ${c.name}`); s.stock.vparts -= 2; c.health = Math.min(100, c.health + 25); c.status = 'repair'; c.down = 3; return;
+      pay(s, vehCost.repair * i, 'Автотранспорт', `Ремонт: ${c.name}`); s.stock.vparts -= 2; c.health = Math.min(100, c.health + 25); c.status = 'repair'; c.down = 3; c.down0 = 3; return;
     }
     throw new Error('Неизвестная операция');
   }
@@ -1966,7 +1972,7 @@
     F.fuelD = fuel; F.cardD = card; F.fillD = fill; F.ownD = ownL;
     F.fuelM = (F.fuelM || 0) + fuel; F.costM = (F.costM || 0) + fill * matPrice(s, 'diesel') + card * matPrice(s, 'diesel') * 1.15;
     // автозаказ запчастей
-    if (F.auto && s.stock.vparts < 3 && !s.orders.some(o => o.key === 'vparts')) { const q = 8, c = q * matPrice(s, 'vparts'); if (c < s.cash * 0.1) { transact(s, -c, 'Закупка МТР', `Автозаказ: Запчасти автотехники ${q} компл`); s.orders.push({ key: 'vparts', qty: q, days: leadTime(s) }); } }
+    if (F.auto && s.stock.vparts < 3 && !s.orders.some(o => o.key === 'vparts')) { const q = 8, c = q * matPrice(s, 'vparts'); if (c < s.cash * 0.1) { transact(s, -c, 'Закупка МТР', `Автозаказ: Запчасти автотехники ${q} компл`); s.orders.push((d => ({ key: 'vparts', qty: q, days: d, d0: d }))(leadTime(s))); } }
     // автоматическое обслуживание
     if (F.auto) for (const c of F.cars) {
       try {
@@ -2208,7 +2214,7 @@
     if (f.status === 'service') throw new Error('Объект уже в ремонте');
     if (f.regen > 0) throw new Error('Идёт регенерация катализатора');
     pay(s, fixCost(s, f, kind), 'Ремонт и ТО', `${kind === 'kr' ? 'Капитальный' : 'Текущий'} ремонт: ${f.name}`);
-    f.status = 'service'; f.serviceDays = fixDays(f, kind); f.fixKind = kind;
+    f.status = 'service'; f.serviceDays = fixDays(f, kind); f.serviceD0 = f.serviceDays; f.fixKind = kind;
     f.health = kind === 'kr' ? 100 : Math.min(100, f.health + 30);
     log(s, `${f.name}: ${kind === 'kr' ? 'капремонт' : 'текущий ремонт'} на ${f.serviceDays} сут`, 'info');
   }
@@ -2535,7 +2541,7 @@
     const diff = { easy: { cash: 6e9, trust: 70 }, normal: { cash: 3e9, trust: 60 }, hard: { cash: 1.2e9, trust: 50 } }[o.difficulty || 'normal'];
     const s = {
       v: VERSION, seed: o.seed || (Date.now() % 1e9), rng: 0, day: 0, nextId: 1, wellNo: 101, tankNo: 1,
-      company: { name: (o.name || 'Сарыбулак Петролеум').slice(0, 40), field: o.field || D.FIELD_NAMES[0], difficulty: o.difficulty || 'normal' },
+      company: { name: (o.name || 'АО «AJT»').slice(0, 40), field: o.field || D.FIELD_NAMES[0], difficulty: o.difficulty || 'normal' },
       cash: diff.cash, priceIndex: 1, trust: diff.trust, morale: 66,
       market: { mode: o.market || 'history', base: 25.5, brent: 25.5, fx: 138, fxBase: 138, noiseB: 0, noiseF: 0 },
       reservoir: { total: 25e6, remaining: 25e6, pressure: 92, prospects: 0 },
@@ -2544,7 +2550,7 @@
       people: [], namesV: 3, genderV: 5, hse: { readiness: 45, culture: 50, daysNoInj: 0, lastMed: -200, lastTraining: -400, drills: {}, injuries: [], fines: [] },
       mGas: 0, mGasUsed: 0, mFlare: 0, mWellDays: 0, mWorkDays: 0, mFails: 0, mInjuries: 0, auto: { buy: false, prs: true, to: false, dgu: false, util: true, ownFuel: true }, settings: { monthReport: true }, cdStats: {}, cdReports: [], report: null,
       ckppnSet: { temp: 55, dose: 0.9, wash: false }, ppd: { comp: 100 }, quality: { water: 0.8, salt: 190, group: 3 }, techWf: 0.06,
-      pf: {}, history: [], daily: [], ledger: [], log: [], flash: [], effects: [], yearReports: [], goalsDone: {}, flags: {},
+      pf: {}, history: [], daily: [], ledger: [], log: [], flash: [], effects: [], yearReports: [], goalsDone: {}, flags: { npzSplit: true },
       mAcc: {}, yAcc: {}, mProd: 0, mLiq: 0, mInj: 0, mSold: 0, mExportRev: 0, mBrentSum: 0, mFxSum: 0, mDays: 0, yProd: 0,
       lossCarry: 0, negMonths: 0, lastEvent: 0, pending: null, gameOver: null, today: null, rank: 100, prevRank: 100, spotDay: -1, spotQty: 0
     };
@@ -2669,6 +2675,8 @@
     if (!s.people) { s.people = []; for (const r of D.ROLES) for (let i = 0; i < (s.staff[r.key] ? s.staff[r.key].n : 0); i++) s.people.push(makePerson(s, r.key)); }
 
     initLpg(s);
+    if (s.company.name === 'Сарыбулак Петролеум') s.company.name = 'АО «AJT»';
+    if (s.company.field === 'Сарыбулак Восточный') s.company.field = 'Саура';
     // автопарк — в конце, когда все роли персонала уже есть
     for (const r of D.ROLES) if (!s.staff[r.key]) s.staff[r.key] = { n: 0, pct: 100 };
     if (!s.fleet) { if (s.stock.vparts == null) s.stock.vparts = 8; initFleet(s); fleetDrivers(s); } if (s.fleet.autoFuel == null) s.fleet.autoFuel = true; if (s.auto.ownFuel == null) s.auto.ownFuel = true; if (s.fleet.cars.some(c => c.type === 'pickup' || c.type === 'uaz')) { let n = 0; for (const c of s.fleet.cars) if (c.type === 'car' || c.type === 'pickup' || c.type === 'uaz') { c.type = 'car'; c.name = `Легковая №${++n}`; c.fl = Math.min(c.fl || 0, D.VEH.car.tank); } } for (const c of s.fleet.cars) if (c.fl == null) c.fl = D.VEH[c.type].tank * 0.7;

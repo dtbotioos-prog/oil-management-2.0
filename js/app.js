@@ -32,7 +32,7 @@
     ['rating', 'ТОП-100', 'rating'], ['tech', 'Технологии', 'tech'], ['events', 'Журнал', 'events'], ['settings', 'Настройки', 'settings']
   ];
   const SUBS = {
-    prod: [['cdng', 'Цеха: план / факт'], ['wells', 'Скважины'], ['res', 'Пласт и ППД']],
+    prod: [['cdng', 'Цеха: план / факт'], ['years', 'По годам'], ['wells', 'Скважины'], ['res', 'Пласт и ППД']],
     ckppn: [['scheme', 'Схема'], ['mode', 'Режим подготовки'], ['tanks', 'Резервуары'], ['equip', 'Оборудование']],
     gas: [['scheme', 'Схема'], ['uppg', 'УППГ'], ['mks', 'МКС и ПНГ'], ['lpg', 'СУГ'], ['gwells', 'Скважины'], ['balance', 'Баланс']],
     soc: [['camp', 'Посёлок'], ['food', 'Столовая'], ['dorm', 'Общежития']],
@@ -107,7 +107,7 @@
   /* ===================== каркас ===================== */
   function render() {
     if (!s) { root.innerHTML = startScreen(); return; }
-    const scroll = document.querySelector('.page')?.scrollTop;
+    const scroll = document.querySelector('.page')?.scrollTop; const mScroll = document.querySelector('.modal')?.scrollTop || 0;
     const keepSel = ['.subtabs', '.scheme-wrap', '.tscroll', '.lb', '.chips.scroll', '.loglist', '.modal', '.sheet'];
     const kept = (ui.keepFor === ui.tab + '|' + (ui.sub[ui.tab] || '')) ? keepSel.map(sel => [...document.querySelectorAll(sel)].map(e => [e.scrollLeft, e.scrollTop])) : null;
     const subLeft = document.querySelector('.subtabs')?.scrollLeft;
@@ -143,6 +143,7 @@
         <div id="tip" class="tip"></div><div id="toasts" class="toasts"></div>
       </div>`;
     if (scroll && !ui.resetScroll) { const p = document.querySelector('.page'); if (p) p.scrollTop = scroll; }
+    if (ui.modalStay && mScroll) { const m = document.querySelector('.modal'); if (m) m.scrollTop = mScroll; }
     if (kept) keepSel.forEach((sel, i) => document.querySelectorAll(sel).forEach((e, j) => { const v = kept[i][j]; if (v) { e.scrollLeft = v[0]; e.scrollTop = v[1]; } }));
     else { const st = document.querySelector('.subtabs'); if (st) { if (subLeft != null && ui.lastTabForSub === ui.tab) st.scrollLeft = subLeft; const on = st.querySelector('.on'); if (on && (on.offsetLeft < st.scrollLeft || on.offsetLeft + on.offsetWidth > st.scrollLeft + st.clientWidth)) st.scrollLeft = on.offsetLeft - 12; } }
     ui.keepFor = ui.tab + '|' + (ui.sub[ui.tab] || ''); ui.lastTabForSub = ui.tab;
@@ -214,6 +215,88 @@
     return '';
   }
 
+  /* ===================== Добыча: план / факт по годам ===================== */
+  function yearsData() {
+    const k = E.kpi(s), Y = {};
+    for (const h of s.history) { const y = +h.m.slice(0, 4), m = +h.m.slice(5, 7) - 1; const r = Y[y] || (Y[y] = { y, plan: 0, fact: 0, rev: 0, net: 0, mp: Array(12).fill(null), mf: Array(12).fill(null), full: 0 });
+      r.plan += h.plan || 0; r.fact += h.fact || 0; r.rev += h.rev || 0; r.net += h.net || 0; r.mp[m] = h.plan || 0; r.mf[m] = h.fact || 0; r.full++; }
+    // текущий год: закрытые месяцы + текущий месяц на дату
+    const cy = Y[k.y] || (Y[k.y] = { y: k.y, plan: 0, fact: 0, rev: 0, net: 0, mp: Array(12).fill(null), mf: Array(12).fill(null), full: 0 });
+    cy.cur = true; cy.plan += k.planToDateMonth || 0; cy.fact += k.factMonth || 0; cy.mp[k.m - 1] = k.planToDateMonth || 0; cy.mf[k.m - 1] = k.factMonth || 0;
+    cy.planYear = k.planYear;
+    // точные данные по цехам (без округления истории), где они сохранились
+    const sm = o => Object.values(o || {}).reduce((a, b) => a + b, 0);
+    for (const r of Object.values(Y)) { const PF = s.pf && s.pf[r.y]; if (!PF) continue;
+      for (let m = 0; m < 12; m++) if (r.mf[m] != null) { r.mf[m] = sm(PF.fact[m]); r.mp[m] = r.cur && m === k.m - 1 ? r.mp[m] : sm(PF.plan[m]); }
+      r.fact = r.mf.reduce((a, v) => a + (v || 0), 0); r.plan = r.mp.reduce((a, v) => a + (v || 0), 0); }
+    return Object.values(Y).sort((a, b) => a.y - b.y);
+  }
+  function vYears() {
+    const Ys = yearsData(), k = E.kpi(s);
+    if (!Ys.length) return '<p class="hint">Пока нет данных.</p>';
+    const ys = Ys.map(r => r.y);
+    let A = ui.yA && ys.includes(ui.yA) ? ui.yA : ys[ys.length - 1], B = ui.yB && ys.includes(ui.yB) ? ui.yB : (ys.length > 1 ? ys[ys.length - 2] : A);
+    const rA = Ys.find(r => r.y === A), rB = Ys.find(r => r.y === B);
+    const best = Ys.filter(r => !r.cur && r.full === 12).sort((a, b) => b.fact - a.fact)[0];
+    const lv = r => r.plan ? (r.fact / r.plan >= 1 ? 'tgood' : r.fact / r.plan >= 0.95 ? 'twarn' : 'tbad') : '';
+    const table = `<div class="tscroll"><table class="tbl yrs"><thead><tr><th>Год</th><th>План, т</th><th>Факт, т</th><th>%</th><th>Откл., т</th><th>Чистая прибыль</th></tr></thead><tbody>${Ys.slice().reverse().map(r => `<tr${r.y === A || r.y === B ? ' class="sel"' : ''}><td><b>${r.y}</b>${r.cur ? ' <small>(на дату)</small>' : r.full < 12 ? ` <small>(${r.full} мес)</small>` : ''}${best && best.y === r.y ? ' 🏆' : ''}</td><td>${num(r.plan)}</td><td>${num(r.fact)}</td><td class="${lv(r)}">${r.plan ? pct(r.fact / r.plan) : '—'}</td><td class="${lv(r)}">${r.fact - r.plan >= 0 ? '+' : ''}${num(r.fact - r.plan)}</td><td class="${r.net < 0 ? 'tbad' : ''}">${money(r.net)}</td></tr>`).join('')}</tbody></table></div>`;
+    const yChart = G.bars({ labels: Ys.map(r => String(r.y)), series: [{ name: 'План', color: C.plan, values: Ys.map(r => r.plan), outline: true }, { name: 'Факт', color: (v, i) => !Ys[i].plan ? C.blue : v >= Ys[i].plan ? C.aqua : v >= Ys[i].plan * 0.95 ? C.yellow : C.red, values: Ys.map(r => r.fact) }], height: 200, unit: 'т', extraTip: i => Ys[i].plan ? `Выполнение: ${pct(Ys[i].fact / Ys[i].plan)}` : '' });
+    const sel = (key, v) => `<select data-change="${key}">${ys.slice().reverse().map(y => `<option value="${y}"${y === v ? ' selected' : ''}>${y}</option>`).join('')}</select>`;
+    const cmp = G.bars({ labels: MON, series: [{ name: `План ${A}`, color: C.plan, values: rA.mp.map(v => v || 0), outline: true }, { name: `Факт ${A}`, color: C.aqua, values: rA.mf.map(v => v || 0) }, { name: `Факт ${B}`, color: C.orange, values: rB.mf.map(v => v || 0) }], height: 220, unit: 'т' });
+    const mrows = MON.map((mn, i) => { const fa = rA.mf[i], fb = rB.mf[i], pa = rA.mp[i]; if (fa == null && fb == null) return '';
+      const d = fa != null && fb != null ? fa - fb : null;
+      return `<tr><td>${mn}</td><td>${pa != null ? num(pa) : '—'}</td><td class="${pa ? (fa >= pa ? 'tgood' : fa >= pa * 0.95 ? 'twarn' : 'tbad') : ''}">${fa != null ? num(fa) : '—'}</td><td>${fb != null ? num(fb) : '—'}</td><td class="${d == null ? '' : d >= 0 ? 'tgood' : 'tbad'}">${d == null ? '—' : (d >= 0 ? '+' : '') + num(d)}</td></tr>`; }).join('');
+    // сравнение за одинаковый период: только месяцы, где есть факт в обоих годах
+    const mm = MON.map((_, i) => i).filter(i => rA.mf[i] != null && rB.mf[i] != null);
+    const per = mm.length === 12 ? 'за год' : mm.length ? `за ${MON[mm[0]]}–${MON[mm[mm.length - 1]]}` : '';
+    const sF = r => sum(mm, i => r.mf[i] || 0), sP = r => sum(mm, i => r.mp[i] || 0);
+    const tot = r => `${num(sF(r))} т${sP(r) ? ' · ' + pct(sF(r) / sP(r)) + ' плана' : ''}`;
+    return `<div class="kpis">
+        ${kpiTile('Лет в истории', num(Ys.length), `с ${Ys[0].y} года`, '')}
+        ${kpiTile('Всего добыто', num(sum(Ys, r => r.fact)) + ' <small>т</small>', `план ${num(sum(Ys, r => r.plan))} т`, '')}
+        ${kpiTile('Лучший год', best ? String(best.y) : '—', best ? `${num(best.fact)} т · ${pct(best.fact / (best.plan || 1))} плана` : 'нет полного года', best ? 'good' : '')}
+        ${kpiTile('Выполнение за всё время', pct(sum(Ys, r => r.fact) / Math.max(1, sum(Ys, r => r.plan))), 'факт к плану на дату', lvl(sum(Ys, r => r.fact) / Math.max(1, sum(Ys, r => r.plan)), 1, 0.95))}
+      </div>
+      <div class="grid2">${card('План / факт по годам, т', yChart)}${card('Итоги по годам', table)}</div>
+      ${card('Сравнение двух лет по месяцам', `<div class="ycmp"><label>Год А ${sel('yA', A)}</label><label>Год Б ${sel('yB', B)}</label></div>
+        <div class="kv3"><div><span>${A} ${per}</span><b>${tot(rA)}</b></div><div><span>${B} ${per}</span><b>${tot(rB)}</b></div><div><span>Разница А − Б</span><b class="${sF(rA) - sF(rB) >= 0 ? 'tgood' : 'tbad'}">${sF(rA) - sF(rB) >= 0 ? '+' : ''}${num(sF(rA) - sF(rB))} т</b></div></div><p class="hint">Сравнение ${per} — одинаковые месяцы в обоих годах.</p>
+        ${cmp}
+        <div class="tscroll"><table class="tbl"><thead><tr><th>Мес</th><th>План ${A}</th><th>Факт ${A}</th><th>Факт ${B}</th><th>А − Б</th></tr></thead><tbody>${mrows}</tbody></table></div>
+        ${rA.cur || rB.cur ? '<p class="hint">Текущий год — по сегодняшний день, текущий месяц — план на дату.</p>' : ''}`)}`;
+  }
+
+  /* ===================== Ход работ (для Сводки) ===================== */
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  // раскрывающаяся группа: заголовок-кнопка, содержимое только когда открыта
+  const grpOpen = k => (ui.grp || {})[k];
+  const group = (k, title, meta, body, warn) => `<div class="grp ${grpOpen(k) ? 'open' : ''}"><button class="grp-h ${warn ? 'warn' : ''}" data-act="grp" data-arg="${esc(k)}"><span class="grp-a">${grpOpen(k) ? '▾' : '▸'}</span><b>${title}</b><span class="grp-m">${meta}</span></button>${grpOpen(k) ? `<div class="grp-b">${body}</div>` : ''}</div>`;
+  // сегментная шкала из 10 ламп
+  const segBar = (v, c) => { const n = Math.round(clamp01(v) * 10); return `<div class="segbar ${c}">${Array.from({ length: 10 }, (_, i) => `<i class="${i < n ? 'on' : ''}"></i>`).join('')}</div>`; };
+  // куда вести по нажатию на работу
+  const facGo = f => D.BUILD[f.type] && (D.BUILD[f.type].ptank || ['npz', 'npz_vac', 'npz_ref', 'npz_hdo', 'npz_fcc', 'npz_bit'].includes(f.type)) ? 'npz:units' : f.type === 'azs' ? 'azs:st' : ['dorm', 'canteen', 'banya', 'club'].includes(f.type) ? 'soc:dorm' : 'ckppn:equip';
+  function worksList() {
+    const W = [], wellName = id => { const w = s.wells.find(x => x.id === id); return w ? w.name : 'скважина'; };
+    const add = (ico, title, sub, left, total, go, st) => W.push({ ico, title, sub, left: Math.max(0, left), p: total > 0 ? clamp01(1 - left / total) : 0, go, st });
+    for (const p of s.projects) add(p.kind === 'build' ? 'build' : 'tech', p.title, p.contractor, p.daysLeft, p.daysTotal || p.daysLeft || 1, 'build:projects', p.daysLeft <= 0 ? 'pay' : p.delay > 2 ? 'late' : '');
+    for (const r of s.repairs) add('prod', 'ПРС: ' + wellName(r.well), 'бригада ПРС', r.days, r.d0 || 3, 'prod:wells', '');
+    for (const f of s.fac) {
+      if (f.status === 'service' && f.serviceDays > 0) add('tech', f.name, f.fixKind === 'kr' ? 'капремонт' : f.fixKind ? 'ремонт' : D.BUILD[f.type].tank ? 'работы на резервуаре' : 'обслуживание', f.serviceDays, f.serviceD0 || Math.max(f.serviceDays, 1), D.BUILD[f.type].tank ? 'ckppn:tanks' : facGo(f), '');
+      if (f.regen > 0) add('npz', f.name, 'регенерация катализатора', f.regen, 8, 'npz:units', '');
+    }
+    for (const o of s.orders) { const m = D.MATERIALS.find(x => x.key === o.key); add('stock', 'Поставка: ' + (m ? m.name : o.key), `${num(o.qty)} ${m ? m.unit : ''}`, o.days, o.d0 || Math.max(o.days, 7), 'stock', ''); }
+    if (s.fleet) for (const c of s.fleet.cars) if (c.status === 'repair') add('truck', c.name, c.down0 === 1 ? 'ТО-2' : 'ремонт в мастерской', c.down, c.down0 || 3, 'fleet:cars', '');
+    return W.sort((a, b) => (b.st === 'pay') - (a.st === 'pay') || a.left - b.left);
+  }
+  function worksCard() {
+    const W = worksList(); if (!W.length) return '';
+    const open = ui.worksOpen, show = open ? W : W.slice(0, 4);
+    const day = d => { const x = new Date(Date.parse(E.iso(s.day)) + Math.ceil(d) * 864e5); return x.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); };
+    return `<section class="card works"><div class="c-h"><h3>Ход работ</h3><span class="wk-n">${W.length} в работе · ${W.filter(w => w.left <= 1).length} завершатся завтра</span></div>
+      <div class="wk-list">${show.map(w => `<button class="wk ${w.st}" data-go="${w.go}">${G.icon(w.ico)}<div class="wk-b"><div class="wk-t"><b>${esc(w.title)}</b><span>${w.st === 'pay' ? 'ожидает оплаты' : w.left <= 0.01 ? 'сегодня' : `${Math.ceil(w.left)} дн · ${day(w.left)}`}</span></div>
+        <div class="wk-bar"><i style="width:${(w.p * 100).toFixed(1)}%"></i>${[25, 50, 75].map(x => `<em style="left:${x}%"></em>`).join('')}</div><small>${esc(w.sub)} · ${Math.round(w.p * 100)}%${w.st === 'late' ? ' · <span class="tbad">задержка</span>' : ''}</small></div></button>`).join('')}</div>
+      ${W.length > 4 ? `<button class="link" data-act="worksOpen">${open ? 'Свернуть' : `Ещё ${W.length - 4} →`}</button>` : ''}</section>`;
+  }
+
   /* ===================== СВОДКА ===================== */
   function vHome() {
     const k = E.kpi(s), t = s.today || {};
@@ -224,10 +307,10 @@
     const PF = E.ensurePF(s, k.y); const dailyPlan = k.planMonth / E.daysInMonth(k.y, k.m);
     const prevOil = s.daily.length > 1 ? s.daily[s.daily.length - 2].oil : t.oil;
     const lastH = s.history[s.history.length - 1];
-    return `
+    return `${worksCard()}
       <div class="hero">
         <div><h1>${esc(s.company.name)}</h1><p>Месторождение ${esc(s.company.field)} · ${s.cdngs.length} ЦДНГ · ${s.wells.length} скважин · ${k.staff} работников</p></div>
-        <div class="odorow"><div class="odobox"><small>Добыто с начала, т</small>${G.odometer(sum(s.history, h => h.fact || 0) + (k.factMonth || 0), 8, 'cum', 1)}</div><div class="odobox"><small>Нефть за сутки, т</small>${G.odometer(t.oil || 0, 5, 'day')}</div><div class="odobox ship"><small>Отгружено сегодня, т</small>${G.odometer((t.ship || 0) * 10, 5, 'ship', 1)}${(() => { const cap = (t.cap && t.cap.ship) || 0, r = cap ? (t.ship || 0) / cap : 0; return `<div class="shipind"><div class="shipbar ${r > 0.95 ? 'bad' : r > 0.01 ? 'good' : 'warn'}"><span style="width:${(Math.min(1, r) * 100).toFixed(1)}%"></span><i style="left:25%"></i><i style="left:50%"></i><i style="left:75%"></i></div><small>${cap ? 'насосы загружены на ' + pct(r) + ' из ' + num(cap) + ' т/сут' : 'нет насосов отгрузки'}</small></div>`; })()}</div></div>
+        <div class="odorow"><div class="odobox"><small>Добыто с начала, т</small>${G.odometer(sum(s.history, h => h.fact || 0) + (k.factMonth || 0), 8, 'cum', 1)}</div><div class="odobox"><small>Нефть за сутки, т</small>${G.odometer((t.oil || 0) * 10, 7, 'day', 1)}</div><div class="odobox ship"><small>Отгружено сегодня, т</small>${G.odometer((t.ship || 0) * 10, 7, 'ship', 1)}${(() => { const cap = (t.cap && t.cap.ship) || 0, r = cap ? (t.ship || 0) / cap : 0; return `<div class="shipind"><div class="shipbar ${r > 0.95 ? 'bad' : r > 0.01 ? 'good' : 'warn'}"><span style="width:${(Math.min(1, r) * 100).toFixed(1)}%"></span><i style="left:25%"></i><i style="left:50%"></i><i style="left:75%"></i></div><small>${cap ? 'насосы загружены на ' + pct(r) + ' из ' + num(cap) + ' т/сут' : 'нет насосов отгрузки'}</small></div>`; })()}</div></div>
         <div class="hero-g">
           ${G.linear({ value: mPct * 100, min: 70, max: 120, marker: 100, ticks: [70, 85, 100, 120], unit: '%', bands: [{ to: 95, color: C.red }, { to: 100, color: C.yellow }, { to: 120, color: C.aqua }], text: pct(mPct), label: 'План месяца (на дату)', sub: `факт ${num(k.factMonth)} т из ${num(k.planToDateMonth)} т` })}
           ${G.linear({ value: s.trust, min: 0, max: 100, ticks: [0, 30, 55, 100], bands: [{ to: 30, color: C.red }, { to: 55, color: C.yellow }, { to: 100, color: C.aqua }], text: num(s.trust) + ' / 100', label: 'Доверие совета', sub: s.trust < 30 ? 'риск отставки' : s.trust < 55 ? 'совет недоволен' : 'совет доволен' })}
@@ -366,6 +449,7 @@
     const sb = sub();
     if (sb === 'wells') return vWells();
     if (sb === 'res') return vRes();
+    if (sb === 'years') return vYears();
     // Цеха: план/факт
     const k = E.kpi(s); const PF = E.ensurePF(s, k.y);
     const months = Array.from({ length: 12 }, (_, i) => i);
@@ -383,7 +467,7 @@
     });
     return `
       <div class="kpis">
-        ${kpiTile(`План ${k.y} г.`, `${num(k.planYear)} <small>т</small>`, lvlName + ' уровень' + (PF.custom ? ' · свой' : ''), '', `<button class="small primary planbtn" data-act="planForm">Изменить план</button>`)}
+        ${kpiTile(`План ${k.y} г.`, `${num(k.planYear)} <small>т</small>`, (PF.prev ? 'на уровне прошлого года' : lvlName + ' уровень' + (PF.custom ? ' · свой' : '')) + ' · утверждён до 31 декабря', '', `<button class="small primary planbtn" data-act="planForm">Изменить план</button>`)}
         ${kpiTile('Факт с начала года', `${num(k.factYear)} <small>т</small>`, `${pct(k.planYear ? k.factYear / k.planYear : 0)} годового плана`, '')}
         ${kpiTile('Отклонение на дату', `${k.factYear - k.planToDate >= 0 ? '+' : ''}${num(k.factYear - k.planToDate)} <small>т</small>`, `${pct(k.planToDate ? k.factYear / k.planToDate : 1)} к плану на дату`, lvl(k.planToDate ? k.factYear / k.planToDate : 1, 1, 0.95))}
         ${kpiTile('Прогноз на год', `${num(k.factYear + (s.today?.oil || 0) * (365 - k.dayOfYear))} <small>т</small>`, 'при текущем дебите', '')}
@@ -640,22 +724,23 @@
     const per = 20, pages = Math.max(1, Math.ceil(list.length / per)); ui.page = Math.min(ui.page, pages - 1);
     const shown = list.slice(ui.page * per, ui.page * per + per);
     return `<div class="kpis">
-      ${kpiTile('Численность', `${ppl.length} чел.`, `средний возраст ${num(ages.reduce((a, b) => a + b, 0) / n, 1)} лет`, '')}
-      ${kpiTile('Средний стаж в компании', ym2(ppl.reduce((a, p) => a + E.tenure(s, p), 0) / n), `общий ${num(ppl.reduce((a, p) => a + E.tenure(s, p) + p.prior, 0) / n, 1)} лет`, '')}
-      ${kpiTile('Предпенсионеры', `${pre} чел.`, `до конца года на пенсию: ${yearEnd}`, pre ? 'warn' : '')}
-      ${kpiTile('Квалификация', num(ppl.reduce((a, p) => a + p.skill, 0) / n, 2), 'средняя эффективность', '')}
-      ${kpiTile('Средняя зарплата', money(ppl.reduce((a, p) => a + E.personSalary(s, p).total, 0) / n), 'с надбавкой за стаж', '')}
-      ${kpiTile('Настроение', `${num(ppl.reduce((a, p) => a + p.mood, 0) / n)}%`, `недовольных: ${ppl.filter(p => p.mood < 40).length}`, '')}
+      ${kpiTile('Численность', `${ppl.length} чел.`, `возраст ${num(ages.reduce((a, b) => a + b, 0) / n, 1)} · стаж ${ym2(ppl.reduce((a, p) => a + E.tenure(s, p), 0) / n)}`, '')}
+      ${kpiTile('Средняя зарплата', money(ppl.reduce((a, p) => a + E.personSalary(s, p).total, 0) / n), `квалификация К ${num(ppl.reduce((a, p) => a + p.skill, 0) / n, 2)}`, '')}
+      ${kpiTile('Предпенсионеры', `${pre} чел.`, `на пенсию в этом году: ${yearEnd}`, pre ? 'warn' : '')}
+      ${kpiTile('Настроение', `${num(ppl.reduce((a, p) => a + p.mood, 0) / n)}%`, `недовольных: ${ppl.filter(p => p.mood < 40).length}`, ppl.filter(p => p.mood < 40).length ? 'warn' : '')}
     </div>
-    ${card('Возрастная структура', G.bars({ labels: groups.map(g => g[0]), series: [{ name: 'Человек', color: C.blue, values: groups.map(g => ages.filter(a => a >= g[1] && a < g[2]).length) }], height: 150, unit: 'чел.' }))}
+    ${card('Возрастная структура', `<div class="agerow">${groups.map(g => { const c = ages.filter(a => a >= g[1] && a < g[2]).length; return `<div><b>${c}</b><i style="height:${Math.max(3, Math.round(c / Math.max(1, ...groups.map(G2 => ages.filter(a => a >= G2[1] && a < G2[2]).length)) * 46))}px"></i><small>${g[0]}</small></div>`; }).join('')}</div>`)}
     <div class="toolbar"><div class="chips scroll">${[['all', 'Все'], ['pre', 'Предпенсионеры'], ['young', 'Молодёжь'], ['sad', 'Недовольные']].map(([id, nm]) => `<button class="fchip ${f === id ? 'on' : ''}" data-act="pf" data-arg="${id}">${nm}</button>`).join('')}</div>
       <div class="row"><label class="sel"><select data-change="pfd"><option value="">Подразделение…</option>${Object.entries(D.DEPTS).map(([k, v]) => `<option value="d:${k}" ${f === 'd:' + k ? 'selected' : ''}>${v}</option>`).join('')}${D.ROLES.map(r => `<option value="r:${r.key}" ${f === 'r:' + r.key ? 'selected' : ''}>· ${r.name}</option>`).join('')}</select></label>
       <label class="sel"><select data-change="ps">${[['name', 'по ФИО'], ['age', 'по возрасту'], ['tenure', 'по стажу'], ['pension', 'до пенсии'], ['skill', 'по эффективности'], ['salary', 'по зарплате']].map(([v, nm]) => `<option value="${v}" ${srt === v ? 'selected' : ''}>${nm}</option>`).join('')}</select></label></div></div>
-    <div class="people">${shown.map(p => { const sal = E.personSalary(s, p); const c = p.cdng && s.cdngs.find(x => x.id === p.cdng); return `<button class="person" data-act="personCard" data-arg="${p.id}">${pFace(p, 52)}
-      <div class="pp-b"><b>${esc(p.name)}</b><small>${esc(ROLE(p.role).name)}${c ? ' · ' + esc(c.name) : ''}</small>
-        <div class="pp-m"><span>${yrs(E.personAge(s, p))}</span><span>стаж ${ym2(E.tenure(s, p))}</span><span>${p.grade} разр.</span><span>${money(sal.total)}</span></div>
-        <div class="pp-s">${bar(p.skill / 1.35, p.skill >= 1 ? 'good' : p.skill >= 0.8 ? 'warn' : 'bad')}<small>К ${p.skill.toFixed(2)}</small></div>${badges(p)}</div></button>`; }).join('') || '<div class="empty">Никого по фильтру</div>'}</div>
-    ${pages > 1 ? `<div class="pager">${btn('‹', 'page', -1, 'small', ui.page === 0)}<span>${ui.page + 1} / ${pages} · ${list.length} чел.</span>${btn('›', 'page', 1, 'small', ui.page >= pages - 1)}</div>` : ''}
+    ${(() => { const pRow = p => { const sal = E.personSalary(s, p); const c = p.cdng && s.cdngs.find(x => x.id === p.cdng); return `<button class="prow" data-act="personCard" data-arg="${p.id}">${pFace(p, 38)}
+      <div class="pr-b"><div class="pr-t"><b>${esc(p.name)}</b><span class="pk ${p.skill >= 1 ? 'good' : p.skill >= 0.8 ? 'warn' : 'bad'}">К ${p.skill.toFixed(2)}</span></div>
+        <small>${esc(ROLE(p.role).name)}${c ? ' · ' + esc(c.name) : ''}</small>
+        <small class="pr-m">${yrs(E.personAge(s, p))} · стаж ${ym2(E.tenure(s, p))} · ${p.grade} разр. · ${money(sal.total)}${p.mood < 40 ? ' · <span class="tbad">недоволен</span>' : ''}${E.yearsToPension(s, p) < 2 ? ' · <span class="twarn">предпенсионер</span>' : ''}</small></div></button>`; };
+      const deps = Object.keys(D.DEPTS).filter(d => list.some(p => ROLE(p.role).dept === d));
+      if (!list.length) return '<div class="empty">Никого по фильтру</div>';
+      return `<div class="grp-tools"><small>${list.length} чел. в ${deps.length} подразделениях</small>${btn(deps.every(d => grpOpen('p:' + d)) ? 'Свернуть все' : 'Раскрыть все', 'grpAll', deps.map(d => 'p:' + d).join(','), 'small ghost')}</div><div class="plist">${deps.map(d => { const ps = list.filter(p => ROLE(p.role).dept === d), sad = ps.filter(p => p.mood < 40).length, pre2 = ps.filter(p => E.yearsToPension(s, p) < 2).length, kk = ps.reduce((a, p) => a + p.skill, 0) / ps.length;
+        return group('p:' + d, esc(D.DEPTS[d]), `${ps.length} чел · К ${kk.toFixed(2)}${sad ? ` · <span class="tbad">недовольных ${sad}</span>` : ''}${pre2 ? ` · <span class="twarn">предпенс. ${pre2}</span>` : ''}`, ps.map(pRow).join(''), sad); }).join('')}</div>`; })()}
     <p class="hint">Нажмите на сотрудника — откроется карточка. К растёт с опытом и обучением.</p>`;
   }
   function personCard(p) {
@@ -888,10 +973,10 @@
     const risk = E.hseRisk(s);
     const drill = key => { const last = H.drills[key]; const ago = last == null ? null : s.day - last; const lim = key === 'fire' ? 183 : 365; return { last, ago, over: ago == null || ago > lim }; };
     return `<div class="kpis">
-      <div class="kpi ${H.daysNoInj >= 365 ? 'good' : H.daysNoInj >= 90 ? '' : 'warn'}">${G.safetyBoard(H.daysNoInj, H.injuries.length ? `последний случай ${dateRu(H.injuries[H.injuries.length - 1].date)}` : 'с начала работы')}</div>
+      ${(() => { const d = H.daysNoInj, ms = [30, 90, 180, 365, 730, 1000, 2000].find(x => x > d) || d + 1000, prev = [0, 30, 90, 180, 365, 730, 1000, 2000].filter(x => x <= d).pop();
+        return `<div class="kpi ${d >= 365 ? 'good' : d >= 90 ? '' : 'warn'}"><div class="k-l">Дней без травм</div><div class="k-v">${num(d)}</div>${segBar((d - prev) / (ms - prev), d >= 365 ? 'good' : d >= 90 ? 'warn' : 'bad')}<div class="k-s">до рубежа ${num(ms)} дн · ${H.injuries.length ? 'последний случай ' + dateRu(H.injuries[H.injuries.length - 1].date) : 'с начала работы'}</div></div>`; })()}
       ${kpiTile('Травм за 12 мес.', inj12.length, `LTIFR ${num(E.ltifr(s), 2)} на 1 млн чел.-ч`, inj12.length ? 'bad' : 'good')}
-      <div class="kpi">${G.signal({ value: H.readiness, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.readiness) + '%', label: 'Готовность к ЧС' })}</div>
-      <div class="kpi">${G.signal({ value: H.culture, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 65, color: C.yellow }, { to: 100, color: C.aqua }], text: num(H.culture) + '%', label: 'Культура безопасности' })}</div>
+      ${[['Готовность к ЧС', H.readiness, 'учения, пожарная охрана, техника'], ['Культура безопасности', H.culture, 'обучение, СИЗ, наряды-допуски']].map(([l, v, sub]) => { const c = v >= 65 ? 'good' : v >= 40 ? 'warn' : 'bad'; return `<div class="kpi ${c}"><div class="k-l">${l}</div><div class="k-v">${num(v)}%</div>${segBar(v / 100, c)}<div class="k-s">${sub}</div></div>`; }).join('')}
       ${kpiTile('Штрафы за 12 мес.', money(fines12.reduce((a, f) => a + f.amount, 0)), `${fines12.length} предписаний`, fines12.length ? 'bad' : 'good')}
       <button class="kpi lnk ${!s.today || !s.today.gas || s.today.gas.util >= 0.8 ? 'good' : s.today.gas.util >= 0.4 ? 'warn' : 'bad'}" data-go="gas:mks"><div class="k-l">Утилизация ПНГ</div><div class="k-v">${s.today && s.today.gas ? pct(s.today.gas.util) : '—'}</div><div class="k-s">схема газа: ЦДПиТГ ›</div></button>
       ${kpiTile('Индекс ОТ и экологии', num(E.hseIndex(s)) + ' / 100', `место в ТОП-100: ${(s.paramRanks || {}).hse || '—'}`, E.hseIndex(s) >= 70 ? 'good' : E.hseIndex(s) >= 40 ? 'warn' : 'bad')}
@@ -1042,12 +1127,24 @@
     </div>`;
     if (sb === 'cars') {
       const list = cars.slice().sort((a, b) => (a.status === 'ok') - (b.status === 'ok') || a.health - b.health);
-      return `${kp}<div class="gwells">${list.map(c => { const V = D.VEH[c.type], [stT, stC] = VST[c.status];
-        return `<div class="gwell vcard ${c.status === 'ok' ? 'work' : 'fail'}"><div class="w-h"><b>${esc(c.name)}</b>${pill(stT, stC)}</div>
-          <div class="vrow2"><div class="fdw">${G.fuelDial({ id: c.id, level: (c.fl || 0) / V.tank, text: `${Math.round(c.fl || 0)} / ${V.tank} л` })}</div><div>${vPlate(c.plate)}<div class="kmrow">${G.odometer(c.km * 10, 7, 'v' + c.id, 1)}<small>км</small></div><small>расход ${V.fuel} л/сут · ${money(V.fuel * dslP)}/сут</small></div></div>
-          ${bar(c.health / 100, c.health < 30 ? 'bad' : c.health < 60 ? 'warn' : 'good')}<small>техсостояние ${Math.round(c.health)}% · КПД ${Math.round(E.vehQ(s, c) * 100)}%${c.status === 'repair' ? ` · в мастерской ещё ${c.down} сут` : ''}</small>
-          <div class="kv3">${dueCell('ЧТО', c.chto, 3)}${dueCell('ТО-2', c.to, 10)}${dueCell('ПТО', c.pto, 30)}</div>
-          <div class="btnrow">${c.status === 'fail' ? btn('Ремонт · ' + money(E.vehCost.repair * i), 'veh', 'repair:' + c.id, 'small primary') : ''}${c.status === 'ok' ? btn('ЧТО', 'veh', 'chto:' + c.id, 'small') : ''}${c.status !== 'fail' ? btn('ТО', 'veh', 'to:' + c.id, 'small') + btn('ПТО', 'veh', 'pto:' + c.id, 'small') : ''}${(c.fl || 0) < V.tank - 1 && c.status !== 'fail' ? btn('Заправить', 'veh', 'fuel:' + c.id, 'small') : ''}${btn('Списать', 'veh', 'sell:' + c.id, 'small ghost')}</div></div>`; }).join('')}</div>`;
+      const dueTxt = (lb, day, w) => { const x = day - s.day; return x <= w ? `<span class="vdue ${x < 0 ? 'bad' : 'warn'}">${lb} ${x < 0 ? 'просрочено' : 'через ' + x + ' дн'}</span>` : ''; };
+      const vItem = c => { const V = D.VEH[c.type], [stT, stC] = VST[c.status], fl = (c.fl || 0) / V.tank;
+        const dd = dueTxt('ЧТО', c.chto, 3) + dueTxt('ТО', c.to, 10) + dueTxt('ПТО', c.pto, 30);
+        const acts = (c.status === 'fail' ? btn('Ремонт · ' + money(E.vehCost.repair * i), 'veh', 'repair:' + c.id, 'small primary') : '')
+          + (c.status === 'ok' && c.chto - s.day <= 3 ? btn('ЧТО', 'veh', 'chto:' + c.id, 'small') : '')
+          + (c.status !== 'fail' && c.to - s.day <= 10 ? btn('ТО', 'veh', 'to:' + c.id, 'small') : '')
+          + (c.status !== 'fail' && c.pto - s.day <= 30 ? btn('ПТО', 'veh', 'pto:' + c.id, 'small') : '')
+          + (c.status !== 'fail' && fl < 0.5 ? btn('Заправить', 'veh', 'fuel:' + c.id, 'small') : '')
+          + (c.status === 'fail' || c.health < 30 ? btn('Списать', 'veh', 'sell:' + c.id, 'small ghost') : '');
+        return `<div class="vitem ${c.status === 'ok' ? '' : 'off'}">
+          <div class="vi-h"><b>${esc(c.name)}</b><span class="vst ${stC}">${stT}</span></div>
+          <div class="vi-m"><span class="vfuel ${fl < 0.25 ? 'low' : ''}"><i style="width:${(fl * 100).toFixed(0)}%"></i></span><small>${Math.round(c.fl || 0)} л</small><small class="vsep">·</small><small class="${c.health < 30 ? 'tbad' : c.health < 60 ? 'twarn' : ''}">состояние ${Math.round(c.health)}%</small><small class="vsep">·</small><small>${num(Math.round(c.km))} км</small></div>
+          ${dd ? `<div class="vi-d">${dd}</div>` : ''}${c.status === 'repair' ? `<small class="vrep">в мастерской ещё ${c.down} сут</small>` : ''}
+          ${acts ? `<div class="btnrow">${acts}</div>` : ''}</div>`; };
+      const types = E.VT.filter(tp => list.some(c => c.type === tp));
+      return `${kp}<div class="grp-tools">${btn(types.every(tp => grpOpen('v:' + tp)) ? 'Свернуть все' : 'Раскрыть все', 'grpAll', types.map(tp => 'v:' + tp).join(','), 'small ghost')}</div><div class="vlist">${types.map(tp => { const cs = list.filter(c => c.type === tp), bad = cs.filter(c => c.status !== 'ok').length, low = cs.filter(c => (c.fl || 0) < D.VEH[tp].tank * 0.25).length, due = cs.filter(c => c.to - s.day <= 10 || c.pto - s.day <= 30 || c.chto - s.day <= 3).length;
+        return group('v:' + tp, esc(D.VEH[tp].name), `${cs.length} шт${bad ? ` · <span class="tbad">${bad} не на линии</span>` : ''}${due ? ` · <span class="twarn">ТО: ${due}</span>` : ''}${low ? ` · <span class="twarn">мало топлива: ${low}</span>` : ''}`, cs.map(vItem).join(''), bad || due || low); }).join('')}</div>
+        <p class="hint">Кнопки появляются, только когда нужны: срок ТО близко, бак меньше половины, поломка. Все сроки — на вкладке «ТО и запчасти».</p>`;
     }
     if (sb === 'to') {
       const rows = cars.slice().sort((a, b) => Math.min(a.chto, a.to, a.pto) - Math.min(b.chto, b.to, b.pto));
@@ -1335,7 +1432,7 @@
   const DENS = { ai: 0.745, a95: 0.75, a98: 0.755, dt: 0.84 };
   function azsPic(f) {
     const st = f.st || {}, cars = f.status === 'ok' ? Math.min(6, Math.round((st.served || 0) / 40)) : 0;
-    const brand = esc(s.company.name.split(' ')[0].toUpperCase().slice(0, 14));
+    const brand = esc((s.company.name.replace(/^(АО|ТОО|ООО|ПАО|ОАО|ЗАО|AO|LLP)\s+/i, '').replace(/[«»"']/g, '').split(' ')[0] || s.company.name).toUpperCase().slice(0, 14));
     const lv = k => Math.max(0, Math.min(1, (f.tk[k] || 0) / (f.tkCap[k] || 1)));
     const pumps = Array.from({ length: f.trk }, (_, i) => { const x = f.trk === 1 ? 140 : 70 + i * (160 / (f.trk - 1)); return `<rect x="${x - 5}" y="64" width="10" height="20" rx="2" fill="#2f4a73"/><rect x="${x - 3}" y="67" width="6" height="4" fill="#7fd1ff"/>`; }).join('');
     const car = (col, d) => `<g class="car" style="animation-delay:${d}s"><rect x="-30" y="77" width="24" height="8" rx="3" fill="${col}"/><rect x="-26" y="72" width="13" height="6" rx="2" fill="#9fb6c9"/><circle cx="-25" cy="86" r="2.6" fill="#111"/><circle cx="-11" cy="86" r="2.6" fill="#111"/></g>`;
@@ -1756,7 +1853,7 @@
       <h1>OIL MANAGEMENT 2.0</h1><p class="sub">Экономический симулятор нефтедобывающей компании · 2000 — …</p>
       ${has ? `<button class="primary big" data-act="continue">Продолжить карьеру</button>` : ''}
       <div class="form">
-        <label>Название компании<input id="ng-name" value="Сарыбулак Петролеум" maxlength="40"></label>
+        <label>Название компании<input id="ng-name" value="АО «AJT»" maxlength="40"></label>
         <label>Месторождение<input id="ng-field" value="${esc(D.FIELD_NAMES[0])}" maxlength="40" list="ng-fields" placeholder="Введите своё название"><datalist id="ng-fields">${D.FIELD_NAMES.map(f => `<option value="${esc(f)}">`).join('')}</datalist><small>Впишите любое название или выберите из подсказок</small></label>
         <label>Сложность<select id="ng-diff"><option value="easy">Лёгкая — 6 млрд ₸, доверие 70</option><option value="normal" selected>Нормальная — 3 млрд ₸, доверие 60</option><option value="hard">Сложная — 1,2 млрд ₸, доверие 50</option></select></label>
         <label>Рынок нефти<select id="ng-market"><option value="history">История 2000–2026 (кризисы 2008, 2014, 2020)</option><option value="random">Случайный рынок</option></select></label>
@@ -1768,7 +1865,13 @@
   }
 
   /* ===================== МОДАЛЬНЫЕ ОКНА ===================== */
+  // одно и то же окно при перерисовке не анимируется заново и сохраняет прокрутку — без дрожания
   function modalHtml() {
+    const h = modalInner(), sig = h ? ((h.match(/<h2>([\s\S]*?)<\/h2>/) || [])[1] || 'modal') : '';
+    const stay = !!sig && sig === ui.modalSig; ui.modalSig = sig; ui.modalStay = stay;
+    return stay ? h.replace('class="modal-bg', 'class="modal-bg stay').replace(/class="modal(?=[ "])/, 'class="modal stay') : h;
+  }
+  function modalInner() {
     if (s && s.gameOver) return `<div class="modal-bg"></div><div class="modal"><h2>Игра окончена</h2><p>${esc(s.gameOver.reason)}</p><p>Дата: ${dateRu(E.iso(s.day))}. Место в рейтинге: №${s.rank}.</p><div class="btnrow">${btn('Новая игра', 'newGame', '', 'primary')}${btn('Экспорт сохранения', 'export')}</div></div>`;
     if (s && s.pending && !(ui.modal && s.pending.key === 'plan')) {
       const p = s.pending;
@@ -1907,6 +2010,9 @@
     valve: a => { doAct('np', { valve: a }); SND.play('valve'); render(); },
     fixfac: a => { const [id, kind] = String(a).split(':'); const f = s.fac.find(x => x.id === Number(id)); if (!f) return; confirmBox(`${kind === 'kr' ? 'Капитальный' : 'Текущий'} ремонт: ${f.name}?`, `${money(E.fixCost(s, f, kind))}, остановка на ${E.fixDays(f, kind)} сут.`, () => { doAct('fixfac', { id, kind }); render(); }); },
     npzRegen: a => confirmBox('Регенерация катализатора?', 'Установка остановится на 8 суток.', () => { doAct('regen', { id: a }); }),
+    grp: a => { ui.grp = ui.grp || {}; ui.grp[a] = !ui.grp[a]; render(); },
+    grpAll: a => { ui.grp = ui.grp || {}; const ks = String(a).split(','), on = !ks.every(k => ui.grp[k]); for (const k of ks) ui.grp[k] = on; render(); },
+    worksOpen: () => { ui.worksOpen = !ui.worksOpen; render(); },
     lpgValve: a => { doAct('lpgSet', { valve: a }); SND.play('valve'); render(); },
     azsUp: a => { const [id, up] = String(a).split(':'); doAct('azsUp', { id, up }, 'Готово'); render(); },
     trucks: a => { doAct('ds', { trucks: Number(a) }, 'Парк бензовозов обновлён'); render(); },
@@ -1968,7 +2074,7 @@
     newGame: () => { if (s && !s.gameOver) { confirmBox('Начать новую игру?', 'Текущая игра и её автосохранение будут удалены. Слоты сохранения останутся.', () => { LS.del(E.SAVE_KEY); LS.del(BACKUP_KEY); { const m = meta(); delete m.autoInfo; delete m.backupInfo; delete m.backupMonth; setMeta(m); } s = null; ui.modal = null; }); } else { LS.del(E.SAVE_KEY); LS.del(BACKUP_KEY); { const m = meta(); delete m.autoInfo; delete m.backupInfo; delete m.backupMonth; setMeta(m); } s = null; ui.modal = null; render(); } },
     continue: () => { if (!autoLoad()) alert('Сохранение не найдено или повреждено'); render(); },
     startNew: () => {
-      s = E.newGame({ name: document.getElementById('ng-name').value.trim() || 'Сарыбулак Петролеум', field: document.getElementById('ng-field').value.trim() || D.FIELD_NAMES[0], difficulty: document.getElementById('ng-diff').value, market: document.getElementById('ng-market').value });
+      s = E.newGame({ name: document.getElementById('ng-name').value.trim() || 'АО «AJT»', field: document.getElementById('ng-field').value.trim() || D.FIELD_NAMES[0], difficulty: document.getElementById('ng-diff').value, market: document.getElementById('ng-market').value });
       ui.tab = 'home'; ui.sub = {}; { const m = meta(); m.backupMonth = E.iso(s.day).slice(0, 7); delete m.backupInfo; setMeta(m); LS.del(BACKUP_KEY); } save(); saveUi(); render();
       if (!LS.get('om2_help_seen')) { LS.set('om2_help_seen', '1'); setTimeout(() => { if (!s.pending) handlers.help(); else ui.showHelpAfter = true; }, 50); }
     },
@@ -2094,6 +2200,7 @@
     else if (k === 'g95' || k === 'g98') { doAct('np', { [k]: el.value }); render(); }
     else if (k === 'fleetAuto' || k === 'fleetRent' || k === 'fleetFuel') { doAct('veh', { op: k === 'fleetAuto' ? 'auto' : k === 'fleetFuel' ? 'autoFuel' : 'rent', on: el.checked }); SND.play('toggle'); render(); }
     else if (k === 'lpgRes') { doAct('lpgSet', { res: el.value }); render(); }
+    else if (k === 'yA' || k === 'yB') { ui[k] = Number(el.value); render(); }
     else if (k === 'autofix') { doAct('ds', { autoFix: el.checked }); render(); }
     else if (k === 'res') doAct('ds', { res: el.value });
     else if (k === 'mkp') doAct('ds', { mkp: el.value });

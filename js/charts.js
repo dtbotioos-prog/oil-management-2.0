@@ -302,6 +302,7 @@
     let prev = o.min, zones = '', zone = 'g';
     for (const b of o.bands || []) { const a = pos(prev), z = pos(Math.min(b.to, o.max)); zones += `<i class="z-${kind(b.color)}" style="left:${a}%;width:${z - a}%"></i>`; if (o.value >= prev && o.value <= b.to) zone = kind(b.color); prev = b.to; }
     if (o.value > prev && o.bands && o.bands.length) zone = kind(o.bands[o.bands.length - 1].color);
+    if (o.value < o.min && o.bands && o.bands.length) zone = kind(o.bands[0].color);
     const ticks = (o.ticks || [o.min, (o.min + o.max) / 2, o.max]).map(v => `<span style="left:${pos(v)}%">${esc(String(Math.round(v)))}${o.unit || ''}</span>`).join('');
     const mark = o.marker != null ? `<b class="lin-mark" style="left:${pos(o.marker)}%"></b>` : '';
     return `<div class="lin z${zone}"><div class="lin-top"><span class="lin-l">${esc(o.label)}</span><span class="lin-v">${esc(o.text)}</span></div>
