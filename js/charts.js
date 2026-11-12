@@ -145,7 +145,7 @@
       <circle cx="${cx}" cy="${cy}" r="53.5" fill="#3b3f44"/>
       <circle cx="${cx}" cy="${cy}" r="52" fill="url(#${uid}f)"/>
       ${bands}${ticks}${nums}${red}
-      <text x="${cx}" y="${cy + 34}" text-anchor="middle" font-size="5.2" letter-spacing=".8" fill="#4a4232" font-family="Georgia,serif">МАНОМЕТР</text>
+      <text x="${cx}" y="${cy + 34}" text-anchor="middle" font-size="5.2" letter-spacing=".8" fill="#4a4232" font-family="Georgia,serif">${o.face || 'МАНОМЕТР'}</text>
       <text x="${cx}" y="${cy + 41}" text-anchor="middle" font-size="4.4" fill="#5a5040" font-family="Georgia,serif">кл. 1,5 ★</text>
       <circle class="mlamp" cx="${cx}" cy="${cy - 17}" r="3" fill="${zone === 'r' ? '#e53935' : '#5a1d1a'}" stroke="#2a2420" stroke-width=".8"/>
       <circle cx="${P(A0 - 6, 44)[0]}" cy="${P(A0 - 6, 44)[1]}" r="1.6" fill="#3a332a"/>

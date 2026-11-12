@@ -76,7 +76,7 @@
     opex: ['ФОТ', 'Соц. налог', 'Электроэнергия', 'Топливо и газ', 'Закупка МТР', 'Транспорт нефти', 'Ремонт и ТО',
       'Подрядные работы', 'Обслуживание фонда', 'Утилизация воды', 'Найм персонала', 'Штрафы и неустойки', 'Прочие расходы', 'Промывка нефти',
       'Охрана труда и ПБ', 'Возмещение вреда', 'Плата за эмиссии', 'Переработка нефти', 'Закупка нефтепродуктов', 'Содержание АЗС', 'Питание персонала', 'Аренда жилья', 'Автотранспорт'],
-    taxes: ['НДПИ', 'Рентный налог', 'КПН', 'Налог на имущество', 'Акциз'],
+    taxes: ['НДПИ', 'Рентный налог', 'КПН', 'Налог на имущество', 'Акциз', 'Экспортная пошлина'],
     interest: ['Проценты по кредитам'],
     capex: ['Капвложения', 'Технологии'],
     finance: ['Кредит получен', 'Погашение кредита', 'Депозит открыт', 'Депозит закрыт', 'Размещение акций', 'Выкуп акций', 'Дивиденды выплачены', 'Покупка акций', 'Продажа акций']
@@ -90,7 +90,8 @@
     const date = iso(s.day);
     if (merge) {
       const key = date.slice(0, 7) + '|' + cat + '|' + merge;
-      const e = s.ledger.slice(0, 60).find(x => x.k === key);
+      let e = null; const mo = date.slice(0, 7); // ищем по всему текущему месяцу, чтобы одна статья не дробилась на дубли
+      for (const x of s.ledger) { if (x.date.slice(0, 7) !== mo) break; if (x.k === key) { e = x; break; } }
       if (e) { e.a += amount; e.date = date; return; }
       s.ledger.unshift({ date, a: amount, cat, note, k: key });
     } else s.ledger.unshift({ date, a: amount, cat, note });
@@ -181,15 +182,25 @@
       'Внешняя перекачка': sum(facs(s, 'pump_ext'), () => 45 * (0.2 + 0.8 * util.ship)) * vfd,
       'МКС (компрессор ПНГ)': sum(facs(s, 'gascomp'), () => 180 * (0.25 + 0.75 * (util.gas != null ? util.gas : 0.8))),
       'УППГ': sum(facs(s, 'uppg'), () => 90 * (0.3 + 0.7 * Math.min(1, s.today && s.today.gas && s.today.gas.load != null ? s.today.gas.load : 0.5))),
-      'НПЗ': sum(NPZ_UNITS, u => sum(facs(s, u), f => { const U = s.today && s.today.ds && s.today.ds.calc && s.today.ds.calc.U[u]; return D.BUILD[u].kw * (0.25 + 0.75 * (U && U.cap > 0 ? Math.min(1, U.in / U.cap) : 0)); })),
       'Вахтовый посёлок': sum(SOC_TYPES, u => facs(s, u).length * D.BUILD[u].kw * 0.7),
-      'АЗС': sum(facs(s, 'azs'), f => 15 + (f.trk - 4) * 2 + (f.cafe ? 8 : 0) + (f.wash ? 12 : 0)),
       'Цеха и АБК': 80 + s.cdngs.length * 20 + assetSummary(s).staff * 0.4
     };
     const season = (p.m === 12 || p.m <= 2) ? 1.06 : (p.m >= 6 && p.m <= 8) ? 1.08 : 1;
     const w = effVal(s, 'heat', 1) * effVal(s, 'cold', 1) * effVal(s, 'energySave', 1);
     for (const k in items) items[k] *= season * w;
     return { items, total: sum(Object.values(items)) };
+  }
+  // НПЗ и АЗС — отдельные потребители: своё подключение к сети 10 кВ (не зависят от энергетики промысла)
+  function dsEnergy(s) {
+    const p = parts(s.day), season = (p.m === 12 || p.m <= 2) ? 1.06 : (p.m >= 6 && p.m <= 8) ? 1.08 : 1, w = effVal(s, 'heat', 1) * effVal(s, 'cold', 1) * effVal(s, 'energySave', 1);
+    const npz = {}, azs = {};
+    for (const u of NPZ_UNITS) for (const f of facs(s, u)) { const U = s.today && s.today.ds && s.today.ds.calc && s.today.ds.calc.U[u]; const run = s.np && s.np.run === 'off' ? 0.08 : 1; npz[f.name] = D.BUILD[u].kw * (0.25 + 0.75 * (U && U.cap > 0 ? Math.min(1, U.in / U.cap) : 0)) * run * season * w; }
+    const pt = sum(facs(s, 'npz_rvs').concat(facs(s, 'npz_rvs10')), f => D.BUILD[f.type].kw || 4); if (pt) npz['Товарный парк (насосы)'] = pt * season;
+    if (facs(s, 'npz').length) npz['Освещение, КИПиА, лаборатория'] = 25 * season;
+    for (const f of facs(s, 'azs')) azs[f.name] = (15 + (f.trk - 4) * 2 + (f.cafe ? 8 : 0) + (f.wash ? 12 : 0) + (f.lpg ? 3 : 0)) * season * w;
+    const tN = sum(Object.values(npz)), tA = sum(Object.values(azs));
+    const eN = tN ? 1.08 - 0.08 * npzOrgD(s).en : 1, eA = tA ? 1.06 - 0.06 * azsOrgC(s).en : 1; // без энергослужбы — перерасход, нет компенсации реактивной мощности
+    return { npz: { items: npz, total: tN * eN, loss: tN * (eN - 1), kwh: tN * eN * 24, cost: tN * eN * 24 * 2.6 * idx(s) }, azs: { items: azs, total: tA * eA, loss: tA * (eA - 1), kwh: tA * eA * 24, cost: tA * eA * 24 * 2.6 * idx(s) } };
   }
   function energySupply(s, cov) {
     const out = effVal(s, 'gridOut', 0) ? 0 : 1;
@@ -420,7 +431,9 @@
         continue;
       }
       let wr = D.BUILD[f.type].tank ? (s.flags.inhibOk ? 0.008 : 0.02) : (WEAR[f.type] || 0.01);
-      f.health = clamp(f.health - wr * wearMul, 1, 100);
+      if (f.type === 'azs') wr *= (1.6 - 0.6 * azsOrgC(s).tech) * (s.dsLack && s.dsLack.trkcons ? 1.5 : 1); // техники ТРК — профилактика колонок
+      f.health = clamp(f.health - wr * (DS_TYPES(f.type) ? 1 : wearMul), 1, 100);
+      if (NPZ_UNITS.includes(f.type) && f.status === 'ok' && f.health < 45 && rnd(s) < 0.003 * (1 - npzOrgD(s).safe)) { f.status = 'fail'; log(s, `Авария на ${f.name}: нарушение регламента — нет надзора ИТР (гл. инженер, инженер ПБ). Требуется ремонт.`, 'bad'); }
       if (f.status === 'ok' && f.health < 25 && !D.BUILD[f.type].tank && rnd(s) < 0.004) {
         f.status = 'fail'; log(s, `Авария: остановлен ${f.name} (износ ${Math.round(f.health)}%). Требуется ремонт.`, 'bad');
       }
@@ -456,14 +469,16 @@
     const gasGtes = Math.min(gasProd - gasHeat, gtesNeed);
     const gasGtesN = Math.min(natNet, Math.max(0, gtesNeed - gasGtes));
     // ГФУ: извлекает пропан-бутан из ПНГ до компрессора; ~20% объёма уходит в СУГ
-    const gfuCap = capOf(s, 'gfu') * energyF * (0.7 + 0.3 * (cov.dept.gas != null ? Math.min(1, cov.dept.gas) : 1));
-    const gfuIn = Math.min(gfuCap, Math.max(0, gasProd - gasHeat - gasGtes)), gfuLpg = gfuIn * LPG_PER_M3;
-    const gasSale = Math.min(gasProd - gasHeat - gasGtes - gfuIn * 0.2, mksCap);
+    const gfuCap = (s.lpg && s.lpg.inGfu === false ? 0 : 1) * capOf(s, 'gfu') * energyF * (0.7 + 0.3 * (cov.dept.gas != null ? Math.min(1, cov.dept.gas) : 1));
+    // МКС сжимает ПНГ → ГФУ извлекает пропан-бутан из сжатого газа → сухой газ в газопровод (без МКС ГФУ стоит)
+    const gasComp = Math.min(Math.max(0, gasProd - gasHeat - gasGtes), mksCap);
+    const LPGD = lpgDay(s, Math.min(gfuCap, gasComp) * LPG_PER_M3);
+    const gfuIn = LPGD.gfu / LPG_PER_M3, gfuLpg = LPGD.gfu;
+    const gasSale = gasComp - gfuIn * 0.2;
     const natSale = natNet - gasGtesN;
     if (gasSale > 0) transact(s, gasSale * GAS_PRICE_P * idx(s), 'Продажа газа', 'Попутный газ (МКС)', 'gas');
     if (natSale > 0) transact(s, natSale * GAS_PRICE_N * (N.ok ? 1 : 0.7) * idx(s), 'Продажа газа', 'Природный газ (УППГ)', 'natgas');
     const gasUsed = gasHeat + gasGtes + gasSale + gfuIn * 0.2;
-    const LPGD = lpgDay(s, gfuLpg);
     s.mGas += gasProd; s.mGasUsed += gasUsed; s.mFlare += gasProd - gasUsed; s.mGasN += N.flow; s.mGasNS += natSale;
     today.ds = DS; today.lpg = LPGD; sharesDay(s);
     today.gas = { prod: gasProd, heat: gasHeat, gtes: gasGtes, sale: gasSale, flare: gasProd - gasUsed, util: gasProd > 0 ? gasUsed / gasProd : 1,
@@ -494,6 +509,7 @@
     s.hires = s.hires.filter(h => h.days > 0);
     const avgPct = sum(D.ROLES, r => s.staff[r.key].pct * s.staff[r.key].n) / Math.max(1, assetSummary(s).staff);
     const avgCov = sum(Object.values(cov.dept)) / Object.keys(cov.dept).length;
+    s.shifts = shiftsDay(s); guardDay(s);
     const FLT = fleetDay(s);
     const SOC = socDay(s);
     const target = clamp(62 + (avgPct - 100) * 1.3 - (1 - avgCov) * 45 + (s.stock.ppe > 0 ? 0 : -10) + effVal(s, 'moraleBoost', 0) + SOC.morTotal + fleetMorale(s), 5, 98);
@@ -577,7 +593,7 @@
     const gradeK = 1 + (p.grade - 3) * 0.08, senior = Math.min(0.25, 0.02 * Math.floor(tenure(s, p)));
     return { base: r.salary * idx(s) * pct * gradeK, senior, total: r.salary * idx(s) * pct * gradeK * (1 + senior) };
   }
-  function syncStaff(s) { for (const r of D.ROLES) s.staff[r.key].n = s.people.filter(p => p.role === r.key).length; }
+  function syncStaff(s) { for (const r of D.ROLES) { if (!s.staff[r.key]) s.staff[r.key] = { n: 0, pct: 100 }; s.staff[r.key].n = s.people.filter(p => p.role === r.key).length; } }
   function addPeople(s, role, n, o = {}) { for (let i = 0; i < n; i++) s.people.push(makePerson(s, role, o)); syncStaff(s); }
   function removePeople(s, role, n) {
     const list = s.people.filter(p => p.role === role).sort((a, b) => a.skill - b.skill).slice(0, n);
@@ -740,6 +756,9 @@
         s.fac.push(f);
         log(s, `Введён в эксплуатацию: ${f.name}`, 'good');
         if (B.tank) s.goalsDone.tank = s.goalsDone.tank || 'pending';
+        staffForShifts(s, pr.type);
+        if (pr.type === 'npz') pcOffers(s);
+        if (pr.type === 'npz' || pr.type === 'azs') { const kit = pr.type === 'npz' ? { npzparts: 3, npzreag: 2, npzadd: 4 } : { trkparts: 2, trkcons: 4 }; for (const k in kit) s.stock[k] = (s.stock[k] || 0) + kit[k]; log(s, `Поставщик передал стартовый склад ${pr.type === 'npz' ? 'НПЗ: ЗИП, реагенты, присадки' : 'АЗС: ЗИП и фильтры ТРК'}`, 'info'); }
       }
       return;
     }
@@ -807,8 +826,9 @@
   function autoBuy(s) {
     for (const m of D.MATERIALS) {
       if (m.tech && !has(s, m.tech)) continue;
+      if (m.group === 'НПЗ и АЗС') continue; // у НПЗ и АЗС свой склад и своя автозакупка
       const inTransit = sum(s.orders.filter(o => o.key === m.key), o => o.qty);
-      const scale = m.key === 'demulg' || m.key === 'inhib' || m.key === 'diesel' ? Math.max(1, s.wells.length / 13) : Math.max(1, s.wells.length / 20);
+      const scale = m.key === 'npzparts' ? Math.max(1, NPZ_UNITS.reduce((x, u) => x + facs(s, u).length, 0) / 3) : m.key === 'trkparts' ? Math.max(1, facs(s, 'azs').length / 2) : m.key === 'demulg' || m.key === 'inhib' || m.key === 'diesel' ? Math.max(1, s.wells.length / 13) : Math.max(1, s.wells.length / 20);
       const min = Math.round(m.min * scale);
       if (s.stock[m.key] + inTransit < min) {
         const qty = Math.round(min * 2 - s.stock[m.key] - inTransit);
@@ -984,6 +1004,7 @@
       if (c.monthsLeft <= 0) { c.status = 'done'; log(s, `Договор №${c.id} с ${c.buyer} исполнен`, 'info'); }
     }
     if (shortCount) s.trust = clamp(s.trust - Math.min(2, shortCount), 0, 100);
+    pcMonth(s, key);
     // КПН
     const g = cat => -(s.mAcc[cat] || 0);
     const rev = sum(PNL.revenue, c => s.mAcc[c] || 0);
@@ -1101,6 +1122,8 @@
       'Культура безопасности': 1.35 - 0.6 * H.culture / 100,
       'Медосмотр': s.day - H.lastMed > 365 ? 1.25 : 1,
       'Автотехника (ТО, износ)': s.fleet && s.fleet.cars.length ? 1 + 0.3 * s.fleet.cars.filter(c => s.day > c.to || c.health < 40).length / s.fleet.cars.length : 1,
+      'Опасные объекты (НПЗ, СУГ)': 1 + 0.02 * hazObjs(s).length + 0.08 * hazObjs(s).filter(f => s.day > (f.lpgExp ?? Infinity)).length,
+      'Усталость смен (НПЗ, АЗС)': 1 + sum(Object.values(s.shifts || {}), I => I.overtime * 0.15),
       'Питание и отдых': s.soc ? (MENU[s.soc.menu] || MENU.std).hse * (socStats(s).homeShare > 0.3 ? 1.15 : 1) : 1
     };
     let k = 1; for (const v of Object.values(f)) k *= v;
@@ -1178,6 +1201,9 @@
         if (H.readiness < 45) v.push([`низкая готовность к ЧС (${Math.round(H.readiness)}%)`, 10e6]);
         if (s.day - (H.drills.gas ?? -999) > 365) v.push(['не проводились учения по газоопасным работам', 6e6]);
         if (cov.dept.hse < 0.8) v.push(['не укомплектована служба ОТ и ПБ', 5e6]);
+        if (facs(s, 'npz').length) { const A = assetSummary(s); if (dsK(s, 'npzhse', A) < 1) v.push(['на НПЗ не укомплектована служба ПБ и ОТ', 4e6]); if (dsK(s, 'npzce', A) < 1) v.push(['на НПЗ нет главного инженера (ответственный за ОПО)', 5e6]); if (dsK(s, 'npzmetr', A) < 1) v.push(['КИПиА НПЗ без метролога — просрочена поверка приборов', 2e6]); }
+        if (facs(s, 'npz').length && s.fleet && !s.fleet.cars.some(c => c.type === 'fire' && c.status === 'ok') && !(s.fleet.rent && fleetAvail(s).rent.fire > 0)) v.push(['на НПЗ нет пожарной автоцистерны (своей или по договору)', 6e6]);
+        { const ex = hazObjs(s).filter(f => s.day > (f.lpgExp ?? Infinity)).length; if (ex) v.push([`просрочена экспертиза промбезопасности: ${ex} об.`, ex * 8e6]); }
         return v; },
       labor: () => { const v = []; const avgCov = sum(Object.values(cov.dept)) / Object.keys(cov.dept).length;
         if (s.day - H.lastMed > 365) v.push(['просрочен периодический медосмотр', 12e6]);
@@ -1362,17 +1388,25 @@
       resolve: (s, d) => {
         if (!d) return; if (s.cash < d.price) { log(s, 'Сделка сорвалась: недостаточно средств', 'warn'); return; }
         transact(s, -d.price, 'Капвложения', `Покупка участка: ${d.n} скважин`);
-        for (let i = 0; i < d.n; i++) { const c = cdngFree(s); if (!c) break; const w = makeWell(s, 'sk', c.id, 0.6); w.health = ri(s, 45, 75); w.book = d.price / d.n; s.wells.push(w); }
-        log(s, `Куплен участок: +${d.n} скважин. Проверьте АГЗУ, энергию и персонал!`, 'good');
+        // все купленные скважины передаются в цеха: в свободный ЦДНГ, а если все заполнены — в наименее загруженный
+        const load = c => s.wells.filter(w => w.cdng === c.id).length;
+        for (let i = 0; i < d.n; i++) { const c = cdngFree(s) || s.cdngs.slice().sort((a, b) => load(a) - load(b))[0]; const w = makeWell(s, 'sk', c.id, 0.6); w.health = ri(s, 45, 75); w.book = d.price / d.n; s.wells.push(w); }
+        log(s, `Куплен участок: +${d.n} скважин (фонд ${s.wells.filter(w => w.type !== 'inj' && w.type !== 'water').length} добывающих). Проверьте АГЗУ, энергию и персонал!`, 'good');
       } },
     { key: 'tax', w: 2, cond: s => coverage(s).dept.aup < 0.85,
       make: s => { const f = Math.max(5e6, s.cash * 0.01); transact(s, -f, 'Штрафы и неустойки', 'Доначисление по налоговой проверке'); log(s, `Налоговая проверка: ошибки в учёте, доначислено ${fmtMoney(f)}. Нужны экономисты в АУП`, 'bad'); } },
     { key: 'grant', w: 1, cond: s => s.cash < 300e6 * idx(s),
       make: s => { const g = 150e6 * idx(s); transact(s, g, 'Прочие доходы', 'Государственная программа поддержки недропользователей'); log(s, `Получена субсидия по госпрограмме поддержки: ${fmtMoney(g)}`, 'good'); } },
-    { key: 'theft', w: 2, cond: s => tankVol(s, 'oil') > 500 && !effVal(s, 'security', 0),
+    { key: 'theft', w: 2, cond: s => tankVol(s, 'oil') > 500 && !effVal(s, 'security', 0) && rnd(s) > 0.85 * secK(s),
       make: s => ({ title: 'Несанкционированная врезка', text: 'На нефтепроводе обнаружена врезка: похищено около 150 тонн нефти. Усилить охрану трубопроводов?',
         options: [{ label: 'Нанять охранное предприятие на год', hint: `${fmtMoney(8e6 * idx(s))}/мес, кражи исключены`, data: 'guard' }, { label: 'Только заварить врезку', hint: 'Кражи могут повториться', data: 'no' }] }),
       resolve: (s, d) => { fillTanks(s, 'oil', -150); if (d === 'guard') addEffect(s, 'security', 365, 1, 'Охрана трубопроводов'); } },
+    { key: 'cable', w: 2, cond: s => rnd(s) > secK(s),
+      make: s => { const w = pick(s, s.wells.filter(x => x.status === 'work' && x.type !== 'inj')); if (!w) return; w.health = Math.max(5, w.health - 25); w.status = 'fail'; w.failCause = 'кража кабеля'; const c = 3e6 * idx(s); transact(s, -c, 'Ремонт и ТО', `Хищение кабеля и оборудования: ${w.name}`); log(s, `Хищение: с ${w.name} украден силовой кабель — скважина остановлена. Укрепите службу безопасности (СБ)`, 'bad'); } },
+    { key: 'azsRob', w: 2, cond: s => facs(s, 'azs').length > 0 && !(s.guard && s.guard.azs) && rnd(s) > 0.3,
+      make: s => { const f = pick(s, facs(s, 'azs').filter(x => x.status === 'ok')); if (!f) return; const loss = rr(s, 0.6, 2.5) * 1e6 * idx(s); transact(s, -loss, 'Прочие расходы', `Ограбление ${f.name}: похищена выручка`); s.morale = clamp(s.morale - 2, 0, 100); log(s, `Ночью ограблена ${f.name}: похищено ${fmtMoney(loss)}. Охранная фирма на АЗС исключила бы это`, 'bad'); } },
+    { key: 'npzTheft', w: 2, cond: s => facs(s, 'npz').length > 0 && !(s.guard && s.guard.npz) && (s.prodStock.dt + s.prodStock.ai) > 50,
+      make: s => { const k = s.prodStock.dt > s.prodStock.ai ? 'dt' : 'ai', q = Math.min(s.prodStock[k], rr(s, 15, 50)); s.prodStock[k] -= q; log(s, `Хищение с товарного парка НПЗ: пропало ${fmtNum(Math.round(q))} т ${FUEL[k].name.toLowerCase()}. Наймите охранную фирму на НПЗ`, 'bad'); } },
     { key: 'metal', w: 2, cond: () => true,
       make: s => { addEffect(s, 'matPrice', 90, 1.2, 'Рост цен на металл'); log(s, 'Металлопрокат подорожал: материалы и строительство +20% на 3 месяца', 'warn'); } },
     { key: 'expert', w: 1, cond: () => true,
@@ -1459,11 +1493,15 @@
       }
       case 'shares': sharesAct(s, a); break;
       case 'veh': fleetAct(s, a); break;
+      case 'guard': { if (!s.guard) s.guard = { npz: false, azs: false }; if (!['npz', 'azs'].includes(a.obj)) throw new Error('Неизвестный объект'); s.guard[a.obj] = !s.guard[a.obj]; log(s, `Охранная фирма на ${a.obj === 'npz' ? 'НПЗ' : 'АЗС'}: ${s.guard[a.obj] ? 'договор заключён' : 'договор расторгнут'}`, 'info'); break; }
       case 'lpgSet': {
         initLpg(s);
         if (a.res !== undefined) s.lpg.res = int(a.res, 0, 30, 'Резерв СУГ для АЗС, сут');
         if (a.valve === 'sell') s.lpg.sell = !s.lpg.sell;
         if (a.valve === 'azs') s.lpg.toAzs = s.lpg.toAzs === false;
+        if (a.valve === 'gfu') s.lpg.inGfu = s.lpg.inGfu === false;
+        if (a.valve === 'npz') s.lpg.inNpz = s.lpg.inNpz === false;
+        if (a.exp) lpgExpertise(s);
         break;
       }
       case 'menu': { if (!MENU[a.menu]) throw new Error('Неизвестное меню'); s.soc.menu = a.menu; break; }
@@ -1481,6 +1519,8 @@
           if (g95 + g98 > 90) throw new Error('АИ-95 + АИ-98 — не более 90%');
           N.g95 = g95; N.g98 = g98;
         }
+        if (a.run !== undefined) { npzRunAct(s, a.run === 'start'); break; }
+        if (a.valve === 'crude') { npzRunAct(s, s.np.run === 'off' || s.np.run === 'stop'); break; }
         if (a.valve !== undefined) { if (!['gas', 'dt', 'mz', 'bit'].includes(a.valve)) throw new Error('Неизвестная задвижка'); if (a.valve === 'bit') N.bit = !N.bit; else N.v[a.valve] = N.v[a.valve] === false; }
         break;
       }
@@ -1510,6 +1550,8 @@
         if (a.res !== undefined) s.ds.res = int(a.res, 0, 30, 'Запас для АЗС, сут');
         if (a.buy !== undefined) s.ds.buy = !!a.buy;
         if (a.autoFix !== undefined) s.ds.autoFix = !!a.autoFix;
+        if (a.fix) { const C = dsCfg(s).fix[a.fix.g]; if (!C) throw new Error('Неверный объект'); if (a.fix.on !== undefined) C.on = !!a.fix.on; if (a.fix.at !== undefined) C.at = int(a.fix.at, 20, 80, 'Порог ремонта, %'); if (a.fix.kr !== undefined) C.kr = int(a.fix.kr, 0, 40, 'Порог капремонта, %'); if (a.fix.max !== undefined) C.max = int(a.fix.max, 1, 5, 'Одновременно в ремонте'); }
+        if (a.wh) { const W = dsCfg(s).wh[a.wh.g]; if (!W) throw new Error('Неверный объект'); if (a.wh.auto !== undefined) W.auto = !!a.wh.auto; if (a.wh.days !== undefined) W.days = int(a.wh.days, 7, 120, 'Запас, сут'); }
         if (a.trucks !== undefined) {
           const n = int(a.trucks, 0, 200, 'Бензовозы');
           if (n > S0.trucks) pay(s, (n - S0.trucks) * 25e6 * idx(s), 'Капвложения', `Покупка бензовозов: ${n - S0.trucks} шт.`);
@@ -1547,7 +1589,7 @@
           if (B.tech && !has(s, B.tech)) throw new Error('Требуется технология: ' + D.TECH.find(t => t.key === B.tech).name);
           if (B.req && facs(s, a.type).length + s.projects.filter(p => p.type === a.type).length >= facs(s, B.req).length) throw new Error('Сначала постройте: ' + D.BUILD[B.req].name);
           if (a.type.startsWith('well_') && a.type !== 'well_gas' && !cdngFree(s)) throw new Error('Все ЦДНГ заполнены (40 скважин на цех). Постройте новый ЦДНГ');
-          if (B.need && !facs(s, B.need).length) throw new Error('Сначала постройте: ' + D.BUILD[B.need].name);
+          for (const nd of [].concat(B.need || [])) if (!facs(s, nd).length) throw new Error('Сначала постройте: ' + D.BUILD[nd].name);
           if (B.ptank) { const pk = a.purpose in PNAME ? a.purpose : 'ai'; s.tender = { kind: 'build', type: a.type, purpose: pk, offers: contractorOffers(s, B.cat, B.cost, B.days), title: `${B.name} (${PNAME[pk]})` }; }
           else if (a.type === 'azs') { const L = D.AZS_LOC[a.purpose] || D.AZS_LOC.road; s.tender = { kind: 'build', type: a.type, purpose: a.purpose in D.AZS_LOC ? a.purpose : 'road', offers: contractorOffers(s, B.cat, B.cost * L.cost, B.days), title: `${B.name} (${L.name})` }; }
           else s.tender = { kind: 'build', type: a.type, purpose: a.purpose || (B.tank ? 'oil' : null), offers: contractorOffers(s, B.cat, B.cost, B.days), title: B.name };
@@ -1640,6 +1682,22 @@
         s.contracts.push({ id: o.id, buyer: o.buyer, channel: o.channel, monthly: o.monthly, monthsLeft: o.months, months: o.months, discount: o.discount, penalty: o.penalty, minGroup: o.minGroup, shippedMonth: 0, shippedTotal: 0, status: 'active', start: iso(s.day), history: [] });
         s.offers = s.offers.filter(x => x !== o);
         log(s, `Заключён договор №${o.id}: ${o.buyer}, ${fmtNum(o.monthly)} т/мес на ${o.months} мес.`, 'good'); break;
+      }
+      case 'pcAccept': {
+        const P = pcInit(s), o = P.offers.find(x => x.id === Number(a.id)); if (!o) throw new Error('Предложение не найдено');
+        if (!facs(s, 'npz').length) throw new Error('Нет НПЗ');
+        if (!pcOk(s, o)) throw new Error(`Продукт не проходит по качеству: покупатель требует ${pcReqText(o)}`);
+        const val = o.monthly * o.months * pcPrice(s, o);
+        if (o.kind === 'gov') pay(s, val * 0.01, 'Прочие расходы', `Банковская гарантия исполнения: договор №${o.id}`);
+        P.list.push(Object.assign({}, o, { monthsLeft: o.months, shippedMonth: 0, shippedTotal: 0, status: 'active', start: iso(s.day), history: [], rev: 0, fines: 0, why: '' }));
+        P.offers = P.offers.filter(x => x !== o);
+        log(s, `Заключён договор №${o.id} на ${FUEL[o.prod].name}: ${o.buyer} (${D.PC_COUNTRIES[o.cc].name}), ${fmtNum(o.monthly)} т/мес на ${o.months} мес.`, 'good'); break;
+      }
+      case 'pcCancel': {
+        const c = pcInit(s).list.find(x => x.id === Number(a.id) && x.status === 'active'); if (!c) throw new Error('Договор не найден');
+        const fine = c.monthly * pcPrice(s, c) * (c.kind === 'gov' ? 0.2 : 0.1);
+        pay(s, fine, 'Штрафы и неустойки', `Расторжение договора №${c.id} на нефтепродукты`); c.status = 'cancelled'; c.endDay = s.day; s.trust = clamp(s.trust - (c.kind === 'gov' ? 3 : 1), 0, 100);
+        log(s, `Договор №${c.id} с ${c.buyer} расторгнут, неустойка ${fmtMoney(fine)}`, 'warn'); break;
       }
       case 'cancelContract': {
         const c = s.contracts.find(x => x.id === Number(a.id) && x.status === 'active'); if (!c) throw new Error('Договор не найден');
@@ -1791,23 +1849,59 @@
   const LPG_FILL = 28;            // л на одну заправку
   const AZS_LPG_TK = 10;          // т, газовый резервуар станции
   function initLpg(s) { if (!s.lpg) s.lpg = { st: 0, sell: true, res: 5, toAzs: true, hist: [] }; }
-  function lpgCap(s) { return sum(s.fac.filter(f => f.type === 'lpg_tank' && f.status === 'ok'), f => D.BUILD.lpg_tank.lpgCap) + 30 * (facs(s, 'gfu').length ? 1 : 0) + 30 * (facs(s, 'npz').length ? 1 : 0); }
+  function lpgCap(s) { return sum(s.fac.filter(f => f.type === 'lpg_tank' && f.status === 'ok'), f => D.BUILD.lpg_tank.lpgCap); }
   function lpgWholesale(s) { return fuelMarket(s, 'lpg'); }
   function lpgRetail(s) { return lpgWholesale(s) * 1.25 * (1 + s.ds.mkp / 100); } // ₸/т на колонке
   function lpgRetailL(s) { return lpgRetail(s) * LPG_DENS / 1000; }
   // спрос станции на газ, т/сут
   function azsLpgDem(s, f) { const cars = (f.st && (f.st.served != null ? f.st.served : f.st.cars)) || 0; const el = Math.max(0.4, 1 - s.ds.mkp * 0.03); return cars * LPG_SHARE * LPG_FILL * el * LPG_DENS / 1000; }
-  function lpgDay(s, gfuT) {
+  // промбезопасность объектов СУГ: освидетельствование сосудов раз в 4 года, утечки и пожары
+  const LPG_EXP = 1460;
+  const lpgObjs = s => s.fac.filter(f => f.type === 'lpg_tank' || f.type === 'gfu' || (f.type === 'azs' && f.lpg));
+  // все опасные производственные объекты: установки НПЗ, парк НПЗ, объекты СУГ — одна экспертиза промбезопасности
+  const hazObjs = s => s.fac.filter(f => NPZ_UNITS.includes(f.type) || f.type === 'npz_rvs' || f.type === 'npz_rvs10').concat(lpgObjs(s));
+  function lpgSafety(s, r) {
+    const H = s.hse, i = idx(s);
+    for (const f of hazObjs(s)) if (f.lpgExp == null) f.lpgExp = s.day + LPG_EXP;
+    for (const f of lpgObjs(s)) {
+      if (f.lpgExp == null) f.lpgExp = s.day + LPG_EXP;
+      if (f.status !== 'ok' || (f.type === 'azs' && (f.lpgOff || 0) > s.day)) continue;
+      const expired = s.day > f.lpgExp;
+      const p = 0.00012 * (1 + (100 - f.health) / 20) * (expired ? 3 : 1) * (H.readiness < 40 ? 1.5 : 1);
+      if (rnd(s) >= p) continue;
+      const big = rnd(s) < (H.readiness > 60 ? 0.2 : 0.45);
+      const dmg = (big ? 40e6 : 8e6) * i;
+      transact(s, -dmg, 'Возмещение вреда', `${big ? 'Пожар' : 'Утечка'} СУГ: ${f.name}`);
+      if (f.type === 'azs') { f.lpgOff = s.day + (big ? 20 : 5); if (f.tk.lpg) f.tk.lpg *= big ? 0 : 0.8; }
+      else { f.health = Math.max(1, f.health - (big ? 35 : 12)); if (big) f.status = 'fail'; if (f.type === 'lpg_tank' && s.lpg) s.lpg.st *= big ? 0.6 : 0.9; }
+      H.readiness = clamp(H.readiness - (big ? 10 : 3), 0, 100);
+      if (big) s.trust = clamp(s.trust - 3, 0, 100);
+      log(s, big ? `ПОЖАР на объекте СУГ: ${f.name}. Объект остановлен, ущерб ${fmtMoney(dmg)}${expired ? '. Просрочено освидетельствование сосудов!' : ''}` : `Утечка СУГ: ${f.name} — локализована, ущерб ${fmtMoney(dmg)}${expired ? '. Просрочено освидетельствование!' : ''}`, 'bad');
+    }
+  }
+  function lpgExpertise(s) {
+    for (const f of hazObjs(s)) if (f.lpgExp == null) f.lpgExp = s.day + LPG_EXP;
+    const list = hazObjs(s).filter(f => s.day > (f.lpgExp ?? Infinity) - 90);
+    if (!list.length) throw new Error('Освидетельствование не требуется');
+    const cost = list.length * 3e6 * idx(s); pay(s, cost, 'Охрана труда и ПБ', `Экспертиза промышленной безопасности: ${list.length} объект(ов)`);
+    for (const f of list) f.lpgExp = s.day + LPG_EXP;
+    return list.length;
+  }
+  function lpgDay(s, gfuPot) {
     initLpg(s); const L = s.lpg, i = idx(s), cap = lpgCap(s);
-    const r = { npz: s.lpgIn || 0, gfu: gfuT, toAzs: 0, azsT: 0, azsL: 0, azsRev: 0, sold: 0, soldRev: 0, bought: 0, lost: 0, deliv: 0, st0: L.st, cap };
+    const r = { npz: s.lpgIn || 0, gfu: 0, gfuPot, fuelNet: 0, gfuOff: L.inGfu === false, npzOff: L.inNpz === false, npzFuel: 0, toAzs: 0, azsT: 0, azsL: 0, azsRev: 0, sold: 0, soldRev: 0, bought: 0, lost: 0, deliv: 0, st0: L.st, cap };
     s.lpgIn = 0;
-    L.st += r.npz + r.gfu;
+    // ёмкость ушла в ремонт / аварию — газ из неё откачивают в ж/д цистерны
+    if (L.st > cap) { const q = L.st - cap; L.st = cap; transact(s, q * (lpgWholesale(s) - 900 * i), 'Продажа нефтепродуктов', 'СУГ: откачка из выведенных в ремонт ёмкостей', 'sidelpg'); r.sold += q; }
+    // задвижка линии СУГ с НПЗ закрыта — газ уходит в топливную сеть завода (сжигается в печах вместо мазута)
+    if (L.inNpz === false && r.npz > 0) { r.npzFuel = r.npz; r.npz = 0; transact(s, r.npzFuel * fuelMarket(s, 'mz') * 0.9, 'Переработка нефти', 'Экономия топлива: СУГ сожжён в печах вместо мазута', 'lpgfuel'); }
+    L.st += r.npz;
     // 1) газовые колонки АЗС: продажа из резервуара станции
     const stations = s.fac.filter(f => f.type === 'azs' && f.lpg);
     let dem = 0;
     for (const f of stations) {
       azsInit(f); const st = f.st || {}; f.lpgSt = { l: 0, rev: 0, dry: 0 };
-      if (f.status !== 'ok') continue;
+      if (f.status !== 'ok' || (f.lpgOff || 0) > s.day) continue;
       const want = azsLpgDem(s, f); dem += want;
       const q = Math.min(want, f.tk.lpg || 0); f.tk.lpg -= q;
       if (q > 0) {
@@ -1819,27 +1913,34 @@
       }
       f.lpgSt.dry = Math.max(0, want - q);
     }
+    let pend = gfuPot; // СУГ с ГФУ за сутки: сначала на газовозы, остаток — в ёмкости
     // 2) доставка газовозами на станции (когда газа в резервуаре меньше половины)
     if (L.toAzs !== false) for (const f of stations) {
       if (f.status !== 'ok' || f.tk.lpg > f.tkCap.lpg * 0.5) continue;
       let need = f.tkCap.lpg - f.tk.lpg;
-      const own = Math.min(need, L.st); L.st -= own; need -= own;
+      const own = Math.min(need, L.st + pend); { const fromG = Math.min(own, pend); pend -= fromG; L.st -= own - fromG; } need -= own;
       let bought = 0;
       if (need > 0 && s.ds.buy && s.cash > 0) { bought = need; transact(s, -bought * lpgWholesale(s) * 1.05, 'Закупка нефтепродуктов', 'СУГ для АЗС (покупной)', 'lpgbuy'); }
       const q = own + bought; if (q <= 0) continue;
       f.tk.lpg += q; r.toAzs += own; r.bought += bought;
       const dc = q * 1500 * i; transact(s, -dc, 'Содержание АЗС', 'Доставка СУГ газовозами', 'lpgdeliv'); r.deliv += dc;
     }
-    // 3) опт: всё сверх резерва под АЗС
+    // 3) ГФУ: остаток в ёмкости; при закрытом опте — только на свободный объём (ГФУ разгружается, СУГ не жгут)
+    const put = L.sell ? pend : clamp(Math.min(pend, cap - L.st), 0, pend);
+    r.gfu = gfuPot - pend + put; L.st += put;
+    if (gfuPot - r.gfu > 0.05 && !L.warnGfu) { L.warnGfu = true; log(s, 'ГФУ разгружена: ёмкости СУГ полны, отгрузка в опт закрыта. Газ идёт в газопровод без извлечения пропан-бутана', 'warn'); }
+    if (r.gfu >= gfuPot - 1e-9) L.warnGfu = false;
+    // 4) опт: всё сверх резерва под АЗС — налив в ж/д цистерны
     if (L.sell) {
       const reserve = Math.min(cap, L.res * dem);
       const q = Math.max(0, L.st - reserve);
       if (q > 0.001) { const rev = q * (lpgWholesale(s) - 900 * i); transact(s, rev, 'Продажа нефтепродуктов', 'СУГ — опт (ж/д цистерны)', 'sidelpg'); L.st -= q; r.sold = q; r.soldRev = rev; }
     }
-    // 4) переполнение ёмкостей — сброс на факел
-    if (L.st > cap) { r.lost = L.st - cap; L.st = cap; if (r.lost > 0.5 && rnd(s) < 0.2) log(s, `Ёмкости СУГ переполнены: ${fmtNum(Math.round(r.lost))} т сожжено на факеле. Откройте отгрузку в опт или постройте ёмкости`, 'warn'); }
+    // 5) газу НПЗ, которому нет места в ёмкостях, — в топливную сеть завода (вместо мазута)
+    if (L.st > cap) { r.fuelNet = L.st - cap; L.st = cap; const save = r.fuelNet * fuelMarket(s, 'mz') * 0.9; if (save > 0) transact(s, save, 'Переработка нефти', 'Экономия топлива: СУГ сожжён в печах вместо мазута', 'lpgfuel'); }
     r.st = L.st; r.dem = dem;
-    s.mLpg = s.mLpg || { prod: 0, azs: 0, sold: 0, lost: 0 }; s.mLpg.prod += r.npz + r.gfu; s.mLpg.azs += r.azsT; s.mLpg.sold += r.sold; s.mLpg.lost += r.lost;
+    s.mLpg = s.mLpg || { prod: 0, azs: 0, sold: 0, lost: 0 }; s.mLpg.prod += r.npz + r.gfu; s.mLpg.azs += r.azsT; s.mLpg.sold += r.sold; s.mLpg.lost += r.fuelNet + r.npzFuel;
+    lpgSafety(s, r);
     return r;
   }
 
@@ -1864,6 +1965,83 @@
     if (s.ownFuelD.day !== s.day) { s.ownFuelD.day = s.day; s.ownFuelD.fleet = 0; s.ownFuelD.dgu = 0; }
     s.ownFuelD[who] = (s.ownFuelD[who] || 0) + got; s.ownFuelD.m = (s.ownFuelD.m || 0) + got;
     return got;
+  }
+
+  /* ===================== Сменный режим 24/7: НПЗ и АЗС ===================== */
+  // 4 бригады по 12 часов (день / ночь, 2 через 2). Меньше бригад — переработки, при 1 бригаде круглосуточно не работать
+  const SHIFT = { npz: { role: 'npzop', name: 'НПЗ' }, retail: { role: 'azsop', name: 'АЗС' } };
+  const BRIG = ['А', 'Б', 'В', 'Г'];
+  const AZS_NIGHT = { city: 0.2, road: 0.3, village: 0.1 }; // доля ночных продаж
+  const shiftMemo = new WeakMap();
+  function shiftInfo(s, dept) {
+    const key = s.day + ':' + (s.people ? s.people.length : 0) + ':' + s.fac.length + ':' + dept;
+    let m = shiftMemo.get(s); if (!m) { m = {}; shiftMemo.set(s, m); }
+    const e = m[dept]; if (e && e.k === key) return e.v;
+    const v = shiftCalc(s, dept); m[dept] = { k: key, v }; return v;
+  }
+  function shiftCalc(s, dept) {
+    const S = SHIFT[dept], need = staffNeed(s)[S.role] || 0, have = s.people ? s.people.filter(p => p.role === S.role).length : ((s.staff[S.role] && s.staff[S.role].n) || 0);
+    const sick = s.people ? s.people.filter(p => p.role === S.role && p.sickUntil > s.day).length : 0, work = Math.max(0, have - sick);
+    const crew = need > 0 ? Math.ceil(need / 4) : 0;
+    const brig = need > 0 ? Math.min(4, Math.floor(work / crew + 1e-9)) : 4;
+    const d = s.day, list = BRIG.slice(0, Math.max(1, brig));
+    const dayB = brig ? list[Math.floor(d / 2) % list.length] : '—', nightB = brig >= 2 ? list[(Math.floor(d / 2) + Math.max(1, Math.floor(list.length / 2))) % list.length] : '—';
+    const overtime = brig >= 4 ? 0 : brig === 3 ? 0.33 : brig === 2 ? 1 : 0;
+    return { need, have, work, sick, crew, brig, dayB, nightB, overtime, h24: brig >= 2, mode: brig >= 4 ? 'норма' : brig === 3 ? 'переработки' : brig === 2 ? '12/12 без выходных' : brig === 1 ? 'только день' : 'нет смен' };
+  }
+  function deptPayDay(s, role) { return s.people ? sum(s.people.filter(p => p.role === role), p => personSalary(s, p).total) / 30 : 0; }
+  // к пуску НПЗ / АЗС отдел кадров набирает операторов на 4 бригады (круглосуточный режим)
+  // укомплектованность роли НПЗ / АЗС (0..1)
+  function dsK(s, role, A) { const r = D.ROLES.find(x => x.key === role), need = r ? r.need(A || assetSummary(s)) : 0; if (!need) return 1; const have = s.people ? s.people.filter(p => p.role === role && !(p.sickUntil > s.day)).length : 0; return clamp(have / need, 0, 1); }
+  // службы НПЗ и АЗС: укомплектованность ИТР и рабочих → коэффициенты 0..1
+  const NO_MEMO = new WeakMap();
+  function npzOrgD(s) { const m = NO_MEMO.get(s); if (m && m.d === s.day && m.n === s.people.length) return m.v; const v = npzOrg(s); NO_MEMO.set(s, { d: s.day, n: s.people.length, v }); return v; }
+  function npzOrg(s) {
+    const A = assetSummary(s), k = r => dsK(s, r, A);
+    return { mgmt: (k('npzdir') + k('npzce')) / 2, tech: k('npztech') * 0.6 + k('npzshift') * 0.4, mech: k('npzmech') * (0.75 + 0.25 * k('npzglmech')),
+      en: k('npzelec') * 0.6 + k('npzemaster') * 0.2 + k('npzglen') * 0.2, kip: k('npzkip') * (0.8 + 0.2 * k('npzmetr')), lab: k('npzlab') * (0.8 + 0.2 * k('npzlabhead')),
+      safe: k('npzhse') * 0.6 + k('npzce') * 0.2 + k('npzpto') * 0.2 };
+  }
+  // кеш на сутки: расчёт штата для каждой станции не повторяем
+  const AO_MEMO = new WeakMap();
+  function azsOrgC(s) { const m = AO_MEMO.get(s); if (m && m.d === s.day && m.n === s.people.length) return m.v; const v = azsOrg(s); AO_MEMO.set(s, { d: s.day, n: s.people.length, v }); return v; }
+  function azsOrg(s) {
+    const A = assetSummary(s), k = r => dsK(s, r, A);
+    return { net: k('azsnet'), mgr: k('azsmgr'), tech: k('azstech') * (0.8 + 0.2 * k('azseng')), en: k('azselec') };
+  }
+  function staffForShifts(s, type) {
+    const dept = NPZ_UNITS.includes(type) ? 'npz' : type === 'azs' ? 'retail' : null; if (!dept || !s.people) return 0;
+    const need = staffNeed(s); let tot = 0;
+    for (const r of D.ROLES.filter(x => x.dept === dept)) { const have = s.people.filter(p => p.role === r.key).length, add = Math.max(0, (need[r.key] || 0) - have); if (add > 0) { addPeople(s, r.key, add, {}); tot += add; } }
+    if (tot > 0) { transact(s, -tot * 30000 * idx(s), 'Найм персонала', `Набор персонала ${dept === 'npz' ? 'НПЗ' : 'АЗС'} на 4 бригады: ${tot} чел.`); log(s, `Набран персонал ${dept === 'npz' ? 'НПЗ' : 'АЗС'}: +${tot} чел. — операторы на 4 бригады, лаборанты, слесари / управляющие`, 'info'); }
+    return tot;
+  }
+  // ежедневно: ночные доплаты и сверхурочные
+  function shiftsDay(s) {
+    const out = {};
+    for (const dept of Object.keys(SHIFT)) {
+      const on = dept === 'npz' ? facs(s, 'npz').length && s.np && s.np.run !== 'off' : facs(s, 'azs').length;
+      if (!on) continue;
+      const I = shiftInfo(s, dept), pay = deptPayDay(s, SHIFT[dept].role);
+      const night = I.h24 ? pay * 0.08 : 0;            // ночные часы 22–06: +50% к 1/3 смены
+      const over = pay * I.overtime * 0.5;             // сверхурочные в полуторном размере
+      if (night + over > 0) transact(s, -(night + over), 'ФОТ', `${SHIFT[dept].name}: ночные${over ? ' и сверхурочные' : ''} (${I.brig} бриг.)`, 'shift' + dept);
+      if (dept === 'npz' && !I.h24 && s.np && (s.np.run === 'on' || s.np.run === 'start')) {
+        s.np.run = 'stop'; s.np.runD = 0; log(s, 'НПЗ: нет второй смены операторов — непрерывный процесс не удержать, вынужденный останов', 'bad');
+      }
+      out[dept] = I;
+    }
+    return out;
+  }
+
+  /* ===================== Безопасность: СБ на промысле и охранная фирма на НПЗ / АЗС ===================== */
+  const GUARD_FEE = { npz: 5e6, azs: 0.6e6 }; // ₸ в месяц: НПЗ — за завод, АЗС — за станцию
+  function secK(s) { const need = D.ROLES.find(r => r.key === 'sec').need(assetSummary(s)), have = s.people ? s.people.filter(p => p.role === 'sec' && !(p.sickUntil > s.day)).length : 0; return need ? clamp(have / need, 0, 1) : 1; }
+  function guardDay(s) {
+    if (!s.guard) s.guard = { npz: false, azs: false };
+    const i = idx(s);
+    if (s.guard.npz && facs(s, 'npz').length) transact(s, -GUARD_FEE.npz * i / 30, 'Прочие расходы', 'Охранная фирма: НПЗ', 'guardnpz');
+    if (s.guard.azs) { const n = facs(s, 'azs').length; if (n) transact(s, -GUARD_FEE.azs * n * i / 30, 'Прочие расходы', `Охранная фирма: АЗС (${n} шт)`, 'guardazs'); }
   }
 
   /* ===================== Автопарк ===================== */
@@ -2019,29 +2197,34 @@
   };
   const SOC_TYPES = ['dorm', 'canteen', 'banya', 'club'];
   function initSoc(s) { s.soc = { menu: 'std', poison: 0 }; }
+  // кто живёт в вахтовом посёлке: промысловые службы. НПЗ, АЗС и офис АУП — местные: живут дома, обедают по талонам
+  const LOCAL_DEPTS = ['npz', 'retail', 'aup'];
+  const isLocal = p => { const r = D.ROLES.find(x => x.key === p.role); return !!r && LOCAL_DEPTS.includes(r.dept); };
   function socStats(s) {
-    const N = s.people ? s.people.length : assetSummary(s).staff;
+    const ALL = s.people ? s.people.length : assetSummary(s).staff;
+    const L = s.people ? s.people.filter(isLocal).length : 0, N = ALL - L;
     const dorms = facs(s, 'dorm').filter(f => f.status === 'ok'), cans = facs(s, 'canteen').filter(f => f.status === 'ok');
     const beds = Math.floor(sum(dorms, f => f.cap * (0.6 + 0.4 * f.health / 100)));
     const seats = Math.floor(sum(cans, f => f.cap * (0.6 + 0.4 * f.health / 100))) * 2;
     const housed = Math.min(N, beds), fed = Math.min(N, seats);
     const dormH = dorms.length ? sum(dorms, f => f.health) / dorms.length : 0, canH = cans.length ? sum(cans, f => f.health) / cans.length : 0;
     const M = MENU[s.soc.menu] || MENU.std;
-    const fedShare = N ? fed / N : 1, homeShare = N ? (N - housed) / N : 0;
+    const fedShare = N ? fed / N : 1, homeShare = ALL ? (N - housed) / ALL : 0;
     const banya = facs(s, 'banya').some(f => f.status === 'ok'), club = facs(s, 'club').some(f => f.status === 'ok');
     const mor = { 'Жильё': -14 * homeShare + (dorms.length ? clamp((dormH - 70) / 10, -3, 2) : 0), 'Питание': M.mor * fedShare - 6 * (1 - fedShare) + (cans.length && canH < 50 ? -2 : 0), 'Спортзал': banya ? 3 : 0, 'Клуб': club ? 3 : 0 };
-    const food = (fed * M.cost + (N - fed) * MENU.dry.cost) * idx(s), rent = (N - housed) * 1500 * idx(s);
-    return { N, beds, seats, housed, fed, homeless: N - housed, unfed: N - fed, dormH, canH, M, mor, morTotal: sum(Object.values(mor), x => x), food, rent, banya, club, fedShare, homeShare };
+    const local = L * MENU.std.cost * idx(s); // талоны на питание для местных (НПЗ, АЗС, офис)
+    const food = (fed * M.cost + (N - fed) * MENU.dry.cost) * idx(s) + local, rent = (N - housed) * 1500 * idx(s);
+    return { N, ALL, local: L, localFood: local, beds, seats, housed, fed, homeless: N - housed, unfed: N - fed, dormH, canH, M, mor, morTotal: sum(Object.values(mor), x => x), food, rent, banya, club, fedShare, homeShare };
   }
   function socDay(s) {
     if (!s.soc) initSoc(s);
     const st = socStats(s);
-    if (st.food > 0) transact(s, -st.food, 'Питание персонала', `${st.M.name}: ${st.fed} чел., сухпаёк: ${st.unfed} чел.`, 'food');
+    if (st.food > 0) transact(s, -st.food, 'Питание персонала', `${st.M.name}: ${st.fed} чел., сухпаёк: ${st.unfed} чел.${st.local ? `, талоны (НПЗ, АЗС, офис): ${st.local} чел.` : ''}`, 'food');
     if (st.rent > 0) transact(s, -st.rent, 'Аренда жилья', `Съёмное жильё: ${st.homeless} чел.`, 'rent');
     // пищевое отравление
     const p = 0.0006 * st.M.sick * (st.canH && st.canH < 50 ? 2 : 1) * (st.unfed > st.N * 0.3 ? 1.5 : 1);
     if (st.N > 0 && rnd(s) < p) {
-      const n = Math.min(st.N, ri(s, 2, 6)); const pool = s.people.filter(x => !(x.sickUntil > s.day));
+      const n = Math.min(st.N, ri(s, 2, 6)); const pool = s.people.filter(x => !(x.sickUntil > s.day) && !isLocal(x));
       for (let i = 0; i < n && pool.length; i++) { const v = pool.splice(Math.floor(rnd(s) * pool.length), 1)[0]; v.sickUntil = s.day + ri(s, 3, 5); }
       s.morale = clamp(s.morale - 3, 0, 100); s.soc.poison = s.day;
       log(s, `Пищевое отравление в столовой: ${n} чел. на больничном`, 'bad');
@@ -2060,11 +2243,34 @@
   const NPZ_UNITS = ['npz', 'npz_vac', 'npz_ref', 'npz_hdo', 'npz_fcc', 'npz_bit'];
   const NELSON = { npz: 1, npz_vac: 2, npz_ref: 5, npz_hdo: 3, npz_fcc: 6, npz_bit: 1.5 };
   const AZS_TRAF = { city: { cars: 420, l: 30, dt: 0.3, g: [0.5, 0.4, 0.1] }, road: { cars: 300, l: 48, dt: 0.6, g: [0.6, 0.35, 0.05] }, village: { cars: 160, l: 26, dt: 0.45, g: [0.75, 0.25, 0] } };
+  // пуск / останов НПЗ задвижкой сырья
+  const NPZ_START = [0.3, 0.6, 0.9];
+  function npzRunK(s) { const N = s.np; return N.run === 'off' ? 0 : N.run === 'stop' ? 0.4 : N.run === 'start' ? NPZ_START[Math.min(2, N.runD)] : 1; }
+  // смена суток режима (вызывается в начале переработки)
+  function npzRunStep(s) {
+    const N = s.np; if (!N || !N.run) return;
+    if (N.run === 'start') { if (N.runD >= 3) { N.run = 'on'; N.runD = 0; log(s, 'НПЗ выведен на технологический режим', 'good'); } }
+    else if (N.run === 'stop') { if (N.runD >= 1) { N.run = 'off'; N.runD = 0; log(s, 'НПЗ остановлен: печи погашены, колонны освобождены', 'warn'); } }
+  }
+  function npzRunTick(s) { const N = s.np; if (N && (N.run === 'start' || N.run === 'stop')) N.runD++; }
+  function npzRunAct(s, on) {
+    const N = s.np; if (!facs(s, 'npz').length) throw new Error('Нет НПЗ');
+    if (on) {
+      if (N.run === 'on' || N.run === 'start') throw new Error('НПЗ уже работает');
+      pay(s, 4e6 * idx(s), 'Переработка нефти', 'Пуск НПЗ: разогрев печей, азот, факельная система');
+      N.run = 'start'; N.runD = 0; log(s, 'Открыта задвижка сырья — пуск НПЗ (3 суток выхода на режим)', 'info');
+    } else {
+      if (N.run === 'off' || N.run === 'stop') throw new Error('НПЗ уже останавливается');
+      N.run = 'stop'; N.runD = 0;
+      for (const ty of NPZ_UNITS) for (const f of facs(s, ty)) f.health = Math.max(1, f.health - 1.5); // термоциклирование
+      log(s, 'Закрыта задвижка сырья — останов НПЗ (1 сутки)', 'warn');
+    }
+  }
   function initDs(s) {
     s.ds = { feed: 300, mode: 'bal', mkp: 0, res: 7, buy: true, sell: 'daily', trucks: 0, mk: { ai: 1, dt: 1, mz: 1 } };
     s.prodStock = { ai: 0, a95: 0, a98: 0, dt: 0, mz: 0 };
     s.prodQ = { ron: 92, sul: 10 };
-    s.np = { elT: 125, wash: 6, t1: 355, tr: 495, th: 355, tf: 515, bit: true, g95: 35, g98: 5, v: { gas: true, dt: true, mz: true } };
+    s.np = { elT: 125, wash: 6, t1: 355, tr: 495, th: 355, tf: 515, bit: true, g95: 35, g98: 5, v: { gas: true, dt: true, mz: true }, run: 'on', runD: 0 };
     s.ds.autoFix = true;
     s.azsFin = newAzsFin(); s.azsHist = [];
     s.cat = { rf: 1, hdo: 1, rfMax: 1, hdoMax: 1 };
@@ -2075,6 +2281,7 @@
     const S = s.ds; if (!S.sell) S.sell = 'daily'; if (S.trucks == null) S.trucks = 0;
     if (!s.np) s.np = { elT: 125, wash: 6, t1: 355, tr: 495, th: 355, tf: 515, bit: true };
     if (!s.cat) s.cat = { rf: 1, hdo: 1, rfMax: 1, hdoMax: 1 };
+    if (!s.np.run) { s.np.run = 'on'; s.np.runD = 0; }
     if (!s.prodQ) s.prodQ = { ron: 92, sul: 10 };
     for (const k of PK) if (s.prodStock[k] == null) s.prodStock[k] = 0;
     if (s.np.g95 == null) { s.np.g95 = 35; s.np.g98 = 5; }
@@ -2116,13 +2323,13 @@
     const N = s.np, C = s.cat, sh = s.ds.mode === 'ai' ? 0.03 : s.ds.mode === 'dt' ? -0.03 : 0;
     const U = {}; const r = { F, U };
     // ЭЛОУ: обессоливание и обезвоживание
-    const salt = s.quality.salt, effE = clamp(0.93 + (N.elT - 100) * 0.0012 + N.wash * 0.0045, 0.8, 0.996);
+    const salt = s.quality.salt, effE = clamp(0.93 + (N.elT - 100) * 0.0012 + N.wash * 0.0045 - (s.dsLack && s.dsLack.npzreag ? 0.12 : 0), 0.7, 0.996); r.noReag = !!(s.dsLack && s.dsLack.npzreag);
     r.saltIn = salt; r.saltOut = salt * (1 - effE); r.waterOut = Math.max(0.05, s.quality.water * (1 - effE) * 0.6);
     r.corr = 1 + Math.max(0, r.saltOut - 3) * 0.25;
     // печь П-1 и колонна К-2: отбор светлых зависит от температуры
     const rec = clamp(0.8 + (N.t1 - 340) * 0.0065, 0.6, 0.985); r.rec = rec;
     r.coke = Math.max(0, N.t1 - 362);
-    const gas = F * CRUDE.gas, naf = F * (CRUDE.naf + sh) * 0.99; r.lossN = F * (CRUDE.naf + sh) * 0.01; const dtsr = F * (CRUDE.kero - sh + CRUDE.dies) * rec;
+    const gas = F * 0.004, lpgAT = F * (CRUDE.gas - 0.004), naf = F * (CRUDE.naf + sh) * 0.99; r.lossN = F * (CRUDE.naf + sh) * 0.01; const dtsr = F * (CRUDE.kero - sh + CRUDE.dies) * rec;
     let resid = F * (CRUDE.vgo + CRUDE.gud) + F * (CRUDE.kero - sh + CRUDE.dies) * (1 - rec);
     U.npz = { in: F, cap: unitCap(s, 'npz') };
     // вакуумный блок
@@ -2177,19 +2384,92 @@
     r.fuel = fuel; r.flare = fgas - gasBurn; r.h2 = h2;
     const bl = blend(ai, ron, N.g95 / 100, N.g98 / 100); r.r92 = bl.r92;
     r.out = { ai: bl.ai, a95: bl.a95, a98: bl.a98, dt, mz }; r.gas = ai;
+    lpg += lpgAT; r.lpgAT = lpgAT;
     r.side = { naf: nafLeft, lpg, vgo, bit };
     r.ron = ron; r.sul = sul;
     r.loss = F * CRUDE.loss + r.lossN + (r.lossV || 0) + (r.lossB || 0) + cokeF + mzBurn - mzShort + gasBurn + r.flare + (r.h2p || 0);
     r.depth = F > 0 ? 1 - (mz + r.loss) / F : 0;
     r.light = F > 0 ? (ai + dt + nafLeft + lpg) / F : 0;
     // затраты, ₸/т в базовых ценах
-    r.opex = F * (600 + 12 + N.wash * 2) + inR * 1300 + inH * 500 + (U.npz_vac ? U.npz_vac.in : 0) * 400 + inF * (1600 + Math.max(0, N.tf - 515) * 60) + (U.npz_bit ? U.npz_bit.in : 0) * 500;
+    r.opex = F * (550 + 12 + N.wash * 2) + inR * 1300 + inH * 500 + (U.npz_vac ? U.npz_vac.in : 0) * 400 + inF * (1600 + Math.max(0, N.tf - 515) * 60) + (U.npz_bit ? U.npz_bit.in : 0) * 500;
     return r;
   }
   const PNAME = { ai: 'АИ-92', a95: 'АИ-95', a98: 'АИ-98', dt: 'дизель', mz: 'мазут' };
   const ptanks = (s, k) => s.fac.filter(f => D.BUILD[f.type] && D.BUILD[f.type].ptank && (!k || f.prod === k));
-  function prodCapK(s, k) { return facs(s, 'npz').filter(f => f.status === 'ok').length * 8000 * PSHARE[k] + sum(ptanks(s, k).filter(f => f.status === 'ok'), f => D.BUILD[f.type].ptank * (0.5 + 0.5 * Math.min(1, f.health / 60))); }
+  function prodCapK(s, k) { return facs(s, 'npz').filter(f => f.status === 'ok' || f.status === 'fail').length * 8000 * PSHARE[k] + sum(ptanks(s, k).filter(f => f.status === 'ok'), f => D.BUILD[f.type].ptank * (0.5 + 0.5 * Math.min(1, f.health / 60))); }
   function prodCap(s) { return sum(PK, k => prodCapK(s, k)); }
+  /* ---------- Договоры на нефтепродукты НПЗ ---------- */
+  const PC_KIND = { dom: 'Внутренний частный', exp: 'Экспорт (частный)', gov: 'Госконтракт' };
+  const PC_PROD = ['ai', 'a95', 'dt', 'mz'];
+  // экспортная таможенная пошлина на нефтепродукты, $/т (вводится с 2008 г.)
+  function pcDuty(s, c) { return c.kind === 'dom' || parts(s.day).y < 2008 ? 0 : (c.prod === 'mz' ? 40 : 60) * s.market.fx; }
+  function pcFreight(s, c) { return (D.PC_COUNTRIES[c.cc] || {}).fr * idx(s) || 0; }
+  // цена по формуле «рынок ± премия», для экспорта — на условиях DAP граница покупателя
+  function pcPrice(s, c) { return fuelOwn(s, c.prod) * (1 + c.prem / 100); } // рынок × качество партии × (1 + премия)
+  // нетбэк спотового опта для сравнения: цена минус ж/д до покупателя
+  function spotNet(s, k) { return fuelOwn(s, k) - 900 * idx(s); }
+  function pcNet(s, c) { return pcPrice(s, c) - pcFreight(s, c) - pcDuty(s, c); }
+  // качество партии соответствует требованиям покупателя?
+  function pcOk(s, c) { if (c.prod === 'ai') return s.prodQ.ron >= c.req.ron; if (c.prod === 'dt') return s.prodQ.sul <= c.req.sul; return true; }
+  function pcReqText(c) { return c.prod === 'ai' ? `октан ≥ ${c.req.ron}` : c.prod === 'dt' ? `сера ≤ ${c.req.sul} ppm (${sulClass(c.req.sul)})` : c.prod === 'a95' ? 'АИ-95 по ГОСТ' : 'без требований'; }
+  function pcInit(s) { if (!s.pc) s.pc = { offers: [], list: [] }; return s.pc; }
+  function pcReq(s, cc) { const C = D.PC_COUNTRIES[cc], y = parts(s.day).y; return { ron: C.ron, sul: C.sul[y < 2008 ? 0 : y < 2016 ? 1 : 2] }; }
+  function pcOffers(s) {
+    const P = pcInit(s); P.offers = [];
+    if (!facs(s, 'npz').length) return;
+    const Y = npzYield(s), feed = Math.max(100, s.ds.feed || 0) * 30, o = s.today && s.today.ds && s.today.ds.out, gT = o ? o.ai + o.a95 + o.a98 : 0;
+    const outM = { ai: feed * Y.ai * (gT > 0 ? o.ai / gT : 1), a95: feed * Y.ai * (gT > 0 ? o.a95 / gT : 0), dt: feed * Y.dt, mz: feed * Y.mz };
+    const prods = PC_PROD.filter(k => outM[k] > 150);
+    if (!prods.length) return;
+    const n = ri(s, 3, 5), CC = Object.keys(D.PC_COUNTRIES).filter(k => k !== 'KZ');
+    for (let i = 0; i < n; i++) {
+      const r = rnd(s), kind = r < 0.4 ? 'dom' : r < 0.75 ? 'exp' : 'gov';
+      const cc = kind === 'dom' ? 'KZ' : pick(s, CC), C = D.PC_COUNTRIES[cc];
+      const prod = pick(s, prods.concat(prods.includes('dt') ? ['dt'] : []));
+      const months = kind === 'gov' ? pick(s, [6, 12, 12]) : kind === 'exp' ? pick(s, [3, 6, 12]) : pick(s, [1, 3, 6]);
+      const monthly = Math.max(100, Math.round(outM[prod] * (kind === 'gov' ? rr(s, 0.3, 0.6) : rr(s, 0.12, 0.4)) / 50) * 50);
+      const prem = r2(kind === 'dom' ? rr(s, -1.5, 3) : kind === 'exp' ? rr(s, 6, 14) : rr(s, 3, 9));
+      const penalty = kind === 'gov' ? pick(s, [0.15, 0.2]) : kind === 'exp' ? pick(s, [0.08, 0.1, 0.12]) : pick(s, [0.05, 0.08]);
+      P.offers.push({ id: uid(s), kind, cc, buyer: kind === 'gov' ? C.gov : pick(s, C.priv), prod, monthly, months, prem, penalty, req: pcReq(s, cc) });
+    }
+  }
+  // суточная отгрузка по договорам — до спотового опта
+  function pcShip(s, out) {
+    const P = pcInit(s), d = parts(s.day), dim = daysInMonth(d.y, d.m), PS = s.prodStock, i = idx(s);
+    out.pc = 0;
+    for (const c of P.list.filter(c => c.status === 'active')) {
+      const plan = c.monthly * d.d / dim, behind = Math.min(c.monthly - c.shippedMonth, plan - c.shippedMonth);
+      if (behind <= 0.01) continue;
+      if (!valveOpen(s, c.prod)) { c.why = 'задвижка налива закрыта'; continue; }
+      if (!pcOk(s, c)) { c.why = 'качество не по договору: ' + pcReqText(c); continue; }
+      const q = Math.min(PS[c.prod] || 0, behind);
+      if (q <= 0.01) { c.why = 'нет продукта в парке'; continue; }
+      c.why = ''; PS[c.prod] -= q; c.shippedMonth += q; c.shippedTotal += q; out.pc += q;
+      const pr = pcPrice(s, c), fr = pcFreight(s, c), du = pcDuty(s, c);
+      transact(s, q * pr, 'Продажа нефтепродуктов', `Договор №${c.id}: ${c.buyer}`, 'pc' + c.id);
+      if (fr > 0) transact(s, -q * fr, 'Транспорт нефти', `Ж/д: нефтепродукты в ${D.PC_COUNTRIES[c.cc].name}`, 'pcfr' + c.cc);
+      if (du > 0) transact(s, -q * du, 'Экспортная пошлина', `Нефтепродукты: ${D.PC_COUNTRIES[c.cc].name}`, 'pcdu');
+      c.rev = (c.rev || 0) + q * (pr - fr - du);
+    }
+  }
+  function pcMonth(s, key) {
+    const P = pcInit(s);
+    for (const c of P.list.filter(c => c.status === 'active')) {
+      const short = c.monthly - c.shippedMonth;
+      if (short > c.monthly * 0.05) {
+        const fine = short * pcPrice(s, c) * c.penalty;
+        transact(s, -fine, 'Штрафы и неустойки', `Недопоставка ${fmtNum(short)} т нефтепродуктов по договору №${c.id}`);
+        log(s, `Штраф: недопоставка ${fmtNum(short)} т по договору №${c.id} (${c.buyer}) — ${fmtMoney(fine)}`, 'bad');
+        if (c.kind === 'gov') s.trust = clamp(s.trust - 1, 0, 100);
+        c.fines = (c.fines || 0) + fine;
+      }
+      c.history.push({ m: key, plan: c.monthly, fact: r2(c.shippedMonth) });
+      c.shippedMonth = 0; c.monthsLeft--;
+      if (c.monthsLeft <= 0) { c.status = 'done'; log(s, `Договор №${c.id} на нефтепродукты исполнен: ${c.buyer}`, 'good'); if (c.kind === 'gov' && !c.fines) s.trust = clamp(s.trust + 1, 0, 100); }
+    }
+    P.list = P.list.filter(c => c.status === 'active' || c.history.length && s.day - (c.endDay || (c.endDay = s.day)) < 400).slice(-30);
+    pcOffers(s);
+  }
   function holdK(s, k) { return (s.ds.sell === 'season' && fuelSeason(s, k) < 1) || !valveOpen(s, k); }
   // задвижки отгрузки: бензин (все марки), дизель, мазут
   const valveKey = k => GAS.includes(k) ? 'gas' : k;
@@ -2213,15 +2493,65 @@
     if (!DS_TYPES(f.type)) throw new Error('Не объект НПЗ или АЗС');
     if (f.status === 'service') throw new Error('Объект уже в ремонте');
     if (f.regen > 0) throw new Error('Идёт регенерация катализатора');
+    const pk = f.type === 'azs' ? 'trkparts' : NPZ_UNITS.includes(f.type) || D.BUILD[f.type].ptank ? 'npzparts' : null, pn = pk ? (kind === 'kr' ? (pk === 'npzparts' ? 3 : 2) : 1) : 0;
+    if (pk && (s.stock[pk] || 0) < pn) throw new Error(`Нет запчастей: нужно ${pn} компл «${D.MATERIALS.find(m => m.key === pk).name}»`);
+    if (D.BUILD[f.type].ptank && f.status === 'ok' && s.prodStock[f.prod] > prodCapK(s, f.prod) - D.BUILD[f.type].ptank * (0.5 + 0.5 * Math.min(1, f.health / 60)) + 1) throw new Error('Сначала освободите резервуар: продукт некуда перекачать на время ремонта');
+    if (pk) s.stock[pk] -= pn;
+    const mk = NPZ_UNITS.includes(f.type) ? npzOrg(s).mech : f.type === 'azs' ? azsOrg(s).tech : 1;
     pay(s, fixCost(s, f, kind), 'Ремонт и ТО', `${kind === 'kr' ? 'Капитальный' : 'Текущий'} ремонт: ${f.name}`);
-    f.status = 'service'; f.serviceDays = fixDays(f, kind); f.serviceD0 = f.serviceDays; f.fixKind = kind;
+    f.status = 'service'; f.serviceDays = Math.ceil(fixDays(f, kind) * (mk < 0.5 ? 1.5 : 1)); f.serviceD0 = f.serviceDays; f.fixKind = kind;
     f.health = kind === 'kr' ? 100 : Math.min(100, f.health + 30);
     log(s, `${f.name}: ${kind === 'kr' ? 'капремонт' : 'текущий ремонт'} на ${f.serviceDays} сут`, 'info');
   }
+  // склад и ремонт НПЗ/АЗС — у каждого объекта свои настройки
+  const DS_MAT = { npz: ['npzparts', 'npzreag', 'npzadd'], azs: ['trkparts', 'trkcons'] };
+  const dsGroup = f => NPZ_UNITS.includes(f.type) || D.BUILD[f.type].ptank ? 'npz' : f.type === 'azs' ? 'azs' : null;
+  function dsCfg(s) {
+    const S = s.ds;
+    if (!S.fix) S.fix = { npz: { on: S.autoFix !== false, at: 40, kr: 20, max: 1 }, azs: { on: S.autoFix !== false, at: 40, kr: 20, max: 2 } };
+    if (!S.wh) S.wh = { npz: { auto: true, days: 30 }, azs: { auto: true, days: 30 } };
+    return S;
+  }
+  // суточный расход материалов объекта
+  function dsUse(s) {
+    const d = s.today && s.today.ds, A = facs(s, 'azs').filter(f => f.status === 'ok').length;
+    return { npzreag: (d ? d.feed || 0 : 0) * 0.00006, npzadd: d && d.out ? ((d.out.ai || 0) + (d.out.a95 || 0) + (d.out.a98 || 0) + (d.out.dt || 0)) * 0.0002 : 0,
+      npzparts: Math.max(0.02, NPZ_UNITS.reduce((x, u) => x + facs(s, u).length, 0) * 0.02), trkparts: Math.max(0.02, facs(s, 'azs').length * 0.015), trkcons: A / 15 };
+  }
+  function dsSupply(s) {
+    const S = dsCfg(s), U = dsUse(s); let lt = null;
+    for (const g of ['npz', 'azs']) {
+      if (!(g === 'npz' ? facs(s, 'npz').length : facs(s, 'azs').length) || !S.wh[g].auto) continue;
+      for (const k of DS_MAT[g]) {
+        const m = D.MATERIALS.find(x => x.key === k), tr = sum(s.orders.filter(o => o.key === k), o => o.qty);
+        if (lt == null) lt = leadTime(s);
+        const minQ = Math.max(m.min, Math.ceil(U[k] * (lt + 7) * 10) / 10), tgt = Math.max(minQ * 2, U[k] * S.wh[g].days);
+        if ((s.stock[k] || 0) + tr < minQ) {
+          const raw = tgt - (s.stock[k] || 0) - tr, q = m.unit === 'т' ? Math.ceil(raw * 10) / 10 : Math.ceil(raw), c = q * matPrice(s, k); // комплекты — целыми
+          if (q > 0 && c < s.cash * 0.2) { transact(s, -c, 'Закупка МТР', `Склад ${g === 'npz' ? 'НПЗ' : 'АЗС'}: ${m.name} ${fmtNum(q)} ${m.unit}`); s.orders.push({ key: k, qty: q, days: lt, d0: lt }); }
+        }
+      }
+    }
+  }
+  function dsConsume(s, out) {
+    const U = dsUse(s), st = s.stock, lack = {};
+    for (const k of ['npzreag', 'npzadd', 'trkcons']) { if (st[k] == null) st[k] = 0; const q = U[k]; if (q <= 0) continue; if (st[k] >= q) st[k] -= q; else { lack[k] = true; st[k] = 0; } }
+    if (out) out.lack = lack; s.dsLack = lack;
+  }
   function autoFixDs(s) {
-    if (!s.ds.autoFix) return;
-    const f = s.fac.filter(x => DS_TYPES(x.type) && x.status !== 'service' && !(x.regen > 0) && (x.health < 40 || x.status === 'fail')).sort((a, b) => a.health - b.health)[0];
-    if (f && s.cash > fixCost(s, f, 'tr') * 5) { try { fixFac(s, f, 'tr'); } catch (e) { } }
+    const S = dsCfg(s);
+    if (S.autoFix) { const f = s.fac.filter(x => SOC_TYPES.includes(x.type) && x.status !== 'service' && (x.health < 40 || x.status === 'fail')).sort((a, b) => a.health - b.health)[0]; if (f && s.cash > fixCost(s, f, 'tr') * 5) { try { fixFac(s, f, 'tr'); } catch (e) { } } }
+    for (const g of ['npz', 'azs']) {
+      const C = S.fix[g]; if (!C.on) continue;
+      const all = s.fac.filter(x => dsGroup(x) === g);
+      if (all.filter(x => x.status === 'service').length >= C.max) continue;
+      const f = all.filter(x => x.status !== 'service' && !(x.regen > 0) && (x.health < C.at || x.status === 'fail')).sort((a, b) => (b.status === 'fail') - (a.status === 'fail') || a.health - b.health)[0];
+      if (!f) continue;
+      const kind = f.health < C.kr ? 'kr' : 'tr';
+      if (s.cash < fixCost(s, f, kind) * 3) { if (!f.afWarn || s.day - f.afWarn > 30) { f.afWarn = s.day; log(s, `Авторемонт ${f.name} отложен: не хватает денег`, 'warn'); } continue; }
+      try { fixFac(s, f, kind); f.afWarn = 0; }
+      catch (e) { if (!f.afWarn || s.day - f.afWarn > 15) { f.afWarn = s.day; log(s, `Авторемонт ${f.name} отложен: ${e.message}`, 'warn'); } }
+    }
   }
 
   /* ---------- АЗС ---------- */
@@ -2247,9 +2577,10 @@
   // ожидаемый спрос станции (машин/сут) без случайности
   function azsCars(s, f, cov) {
     const m = parts(s.day).m, summer = m >= 5 && m <= 9, L = D.AZS_LOC[f.loc] || D.AZS_LOC.road, T = AZS_TRAF[f.loc] || AZS_TRAF.road;
-    const staff = 0.5 + 0.5 * (cov.dept.retail != null ? Math.min(1, cov.dept.retail) : 1);
+    const SI = shiftInfo(s, 'retail'), staff = SI.brig >= 2 ? (SI.brig === 2 ? 0.97 : 1) : SI.brig === 1 ? 1 - (AZS_NIGHT[f.loc] ?? 0.2) : 0;
     const ok = f.status === 'ok' ? 1 : 0;
-    return ok * T.cars * (summer && L.summer ? L.summer : 1) * azsEl(s) * azsBrand(s) * staff * (0.6 + 0.4 * f.health / 100) * (f.cafe ? 1.06 : 1) * (f.wash ? 1.04 : 1);
+    const AO = azsOrgC(s);
+    return (s.dsLack && s.dsLack.trkcons ? 0.95 : 1) * (0.95 + 0.05 * AO.net) * (0.97 + 0.03 * AO.en) * ok * T.cars * (summer && L.summer ? L.summer : 1) * azsEl(s) * azsBrand(s) * staff * (0.6 + 0.4 * f.health / 100) * (f.cafe ? 1.06 : 1) * (f.wash ? 1.04 : 1);
   }
   // структура спроса станции по видам топлива, т на 1 машину
   function azsMix(f) {
@@ -2269,24 +2600,31 @@
     for (const k of ['ai', 'dt', 'mz']) S.mk[k] = clamp(S.mk[k] * Math.exp(0.008 * gauss(s)) + (1 - S.mk[k]) * 0.02, 0.8, 1.25);
     const z = () => Object.fromEntries(PK.map(k => [k, 0]));
     const out = { feed: 0, load: 0, out: z(), side: { naf: 0, lpg: 0, vgo: 0, bit: 0 }, whole: z(), azs: { ai: 0, a95: 0, a98: 0, dt: 0 }, bought: 0, lost: 0, queue: 0, dry: 0, azsRev: 0, shopRev: 0, cars: 0, deliv: 0, hired: 0, calc: null, dem: null, fin: null };
-    autoFixDs(s);
+    dsConsume(s, null); dsSupply(s); autoFixDs(s);
+    { const DE = dsEnergy(s); if (DE.npz.cost > 0) transact(s, -DE.npz.cost, 'Электроэнергия', 'НПЗ: сеть 10 кВ', 'elnpz'); if (DE.azs.cost > 0) transact(s, -DE.azs.cost, 'Электроэнергия', 'АЗС: городская сеть', 'elazs'); out.energy = DE; }
     for (const t of NPZ_UNITS) for (const f of facs(s, t)) if (f.regen > 0 && --f.regen === 0) { if (t === 'npz_ref') s.cat.rf = s.cat.rfMax; if (t === 'npz_hdo') s.cat.hdo = s.cat.hdoMax; log(s, `${f.name}: регенерация катализатора завершена`, 'good'); }
     /* --- переработка --- */
+    npzRunStep(s);
     const capRaw = unitCap(s, 'npz');
     if (capRaw > 0) {
-      const capN = capRaw * energyF * (0.5 + 0.5 * (cov.dept.npz != null ? Math.min(1, cov.dept.npz) : 1)) * (s.quality.water > 1 ? 0.7 : 1);
+      const SI = shiftInfo(s, 'npz'), O = npzOrg(s), trip = rnd(s) < 0.012 * (1 - O.en), capN = capRaw * (SI.brig >= 3 ? 1 : SI.brig === 2 ? 0.95 : 0) * (0.94 + 0.06 * O.mgmt) * (0.96 + 0.04 * O.tech) * (0.95 + 0.05 * O.kip) * (trip ? 0.5 : 1) * (s.quality.water > 1 ? 0.7 : 1);
+      if (trip) { out.trip = true; log(s, 'НПЗ: отключение питания на подстанции установок — без электромонтёров восстановление заняло полсмены', 'warn'); }
       const Y0 = npzCalc(s, 100, cov).out;
       const room = Math.min(...PK.map(k => Y0[k] > 0 ? Math.max(0, prodCapK(s, k) - P[k]) / (Y0[k] / 100) : Infinity));
-      let feed = Math.max(0, Math.min(S.feed, capN, oilStock, room));
+      // режим завода: пуск 3 суток (30 → 60 → 90%), останов 1 сутки (40%), остановлен — 0
+      const N = s.np, rk = npzRunK(s);
+      let feed = Math.max(0, Math.min(S.feed * rk, capN, oilStock, room));
+      out.run = N.run; out.rk = rk;
       out.full = room < Math.min(S.feed, capN) * 0.99;
       if (feed > 0.01) {
         fillTanks(s, 'oil', -feed);
         const R = npzCalc(s, feed, cov); out.calc = R;
         mixQ(s, 'ai', R.out.ai, R.r92); mixQ(s, 'dt', R.out.dt, R.sul);
         for (const k of PK) { P[k] += R.out[k]; out.out[k] = R.out[k]; M[k] = (M[k] || 0) + R.out[k]; }
-        transact(s, -R.opex * i, 'Переработка нефти', 'Затраты НПЗ: реагенты, катализаторы, ремонт', 'npz');
+        transact(s, -R.opex * i, 'Переработка нефти', 'Затраты НПЗ: топливо печей, пар, вода, износ катализаторов', 'npz');
         for (const k in R.side) if (R.side[k] > 0.01) { if (k === 'lpg') { s.lpgIn = (s.lpgIn || 0) + R.side.lpg; out.side.lpg = R.side.lpg; M.side += R.side.lpg; continue; } const pr = fuelMarket(s, k); transact(s, R.side[k] * (pr - 900 * i), 'Продажа нефтепродуктов', `${SIDE[k].name} — опт`, 'side' + k); out.side[k] = R.side[k]; M.side += R.side[k] * pr; }
-        for (const f of facs(s, 'npz')) f.health = Math.max(1, f.health - 0.01 * (R.corr - 1 + R.coke * 0.25));
+        const mechW = 1 + (1 - O.mech); // нет слесарей — оборудование изнашивается быстрее
+        for (const f of facs(s, 'npz')) f.health = Math.max(1, f.health - 0.01 * (R.corr - 1 + R.coke * 0.25) * mechW - 0.004 * (mechW - 1));
         for (const f of facs(s, 'npz_fcc')) f.health = Math.max(1, f.health - 0.006 * Math.max(0, s.np.tf - 520));
         if (R.U.npz_ref) s.cat.rf = Math.max(0.3, s.cat.rf - 0.0009 * (1 + Math.max(0, s.np.tr - 490) / 12) * (R.U.npz_ref.in / Math.max(1, R.U.npz_ref.cap)));
         if (R.U.npz_hdo) s.cat.hdo = Math.max(0.3, s.cat.hdo - 0.0006 * (1 + Math.max(0, s.np.th - 350) / 10) * (R.U.npz_hdo.in / Math.max(1, R.U.npz_hdo.cap)));
@@ -2298,7 +2636,11 @@
     const az = facs(s, 'azs');
     const need = { ai: 0, a95: 0, a98: 0, dt: 0 };
     const F = s.azsFin || (s.azsFin = newAzsFin());
-    let staffDay = 0; { const r = D.ROLES.find(x => x.key === 'azsop'); staffDay = r ? r.salary * ((s.staff.azsop && s.staff.azsop.pct) || 100) / 100 * i / 30 : 0; }
+    // управленческий учёт АЗС: весь персонал сети (ФОТ + соц. налог + ночные), электроэнергия и охранная фирма — делятся по станциям (сами платежи проходят в своих статьях)
+    const nAz = Math.max(1, facs(s, 'azs').length);
+    const staffDay = sum(s.people.filter(p => p.role && D.ROLES.find(r => r.key === p.role).dept === 'retail'), p => personSalary(s, p).total) * 1.11 / 30 / nAz;
+    const DEa = out.energy ? out.energy.azs : null, guardSt = s.guard && s.guard.azs ? GUARD_FEE.azs * i / 30 : 0;
+    const AO = azsOrgC(s);
     for (const f of az) {
       azsInit(f);
       const st = { cars: 0, served: 0, queue: 0, dry: 0, l: 0, lk: { ai: 0, a95: 0, a98: 0, dt: 0 }, rev: 0, shop: 0, deliv: 0, cogs: 0, exc: 0, opex: 0, ebitda: 0 };
@@ -2319,19 +2661,22 @@
           }
         }
         const buyers = st.served * (wantT > 0 ? got / wantT : 1);
-        const shop = buyers * (0.2 + (f.cafe ? 0.1 : 0)) * (1200 + (f.cafe ? 900 : 0)) * i + (f.wash ? buyers * 0.05 * 2000 * i : 0);
+        const mgK = AO.mgr; // без управляющего — недостачи в резервуарах и кассе
+        if (mgK < 1) { st.short = 0; for (const k of RET) { const x = Math.min(f.tk[k], (out.azs[k] > 0 ? st.lk[k] * FUEL[k].dens / 1000 : 0) * 0.008 * (1 - mgK)); f.tk[k] -= x; st.short += x; } }
+        const shop = (0.85 + 0.15 * mgK) * buyers * (0.2 + (f.cafe ? 0.1 : 0)) * (1200 + (f.cafe ? 900 : 0)) * i + (f.wash ? buyers * 0.05 * 2000 * i : 0);
         if (shop > 0) { transact(s, shop * 0.35, 'Розница АЗС', 'Магазин, кафе, мойка (маржа)', 'shop'); st.shop = shop * 0.35; }
         out.cars += buyers; out.queue += st.queue; out.dry += st.dry; out.azsRev += st.rev; out.shopRev += shop * 0.35;
         st.cars = buyers;
       }
-      st.opex = (10000 + (f.cafe ? 8000 : 0) + (f.wash ? 5000 : 0) + (f.trk - 4) * 1000) * i;
-      st.staff = staffDay * azsStaffN(f);
+      st.opex = (8000 + (f.cafe ? 8000 : 0) + (f.wash ? 5000 : 0) + (f.trk - 4) * 1000) * i;
+      st.own = st.opex; st.opex += guardSt + (DEa && DEa.total > 0 ? DEa.cost * (DEa.items[f.name] || 0) / Math.max(1e-9, sum(Object.values(DEa.items), x => x)) : 0);
+      st.staff = staffDay;
       for (const k of RET) if (f.tk[k] < f.tkCap[k] * 0.5) need[k] += f.tkCap[k] - f.tk[k];
       f.st = st;
     }
     out.lost = out.dry;
     if (az.length) {
-      transact(s, -sum(az, f => f.st.opex), 'Содержание АЗС', 'Аренда, охрана, касса, коммунальные', 'azsop');
+      transact(s, -sum(az, f => f.st.own != null ? f.st.own : f.st.opex), 'Содержание АЗС', 'Аренда земли, инкассация, вода, вывоз ТБО', 'azsop');
       M.azsRev += out.azsRev + out.shopRev; M.cars += out.cars;
     }
     /* --- доставка бензовозами --- */
@@ -2361,18 +2706,21 @@
     }
     if (az.length) F.days++;
     const dem = azsDemand(s, cov); out.dem = dem;
+    pcShip(s, out);
     /* --- опт: всё сверх запаса для АЗС --- */
+    const npzLab = facs(s, 'npz').length ? npzOrg(s).lab : 1;
     for (const k of PK) {
       const daily = k === 'mz' || !retailOK(s, k) ? 0 : (dem[k] || 0);
       const keep = holdK(s, k) ? prodCapK(s, k) : Math.min(prodCapK(s, k), daily * S.res);
       const q = Math.max(0, P[k] - keep);
       if (q > 0.01) {
-        P[k] -= q; const pr = fuelOwn(s, k);
+        P[k] -= q; const pr = fuelOwn(s, k) * (npzLab < 0.5 ? 0.95 : 1) * (k !== 'mz' && s.dsLack && s.dsLack.npzadd ? 0.97 : 1); // без лаборатории нет паспорта качества — скидка
         transact(s, q * pr, 'Продажа нефтепродуктов', `${k === 'ai' ? ronName(s.prodQ.ron) : k === 'dt' ? 'ДТ ' + sulClass(s.prodQ.sul) : FUEL[k].name} — опт`, 'whole' + k);
         transact(s, -q * 900 * i, 'Транспорт нефти', 'Отгрузка нефтепродуктов (ж/д)', 'trpnp');
         out.whole[k] = q; M.whole += q * pr;
       }
     }
+    npzRunTick(s);
     return out;
   }
   // закрытие месяца по АЗС
@@ -2550,7 +2898,7 @@
       people: [], namesV: 3, genderV: 5, hse: { readiness: 45, culture: 50, daysNoInj: 0, lastMed: -200, lastTraining: -400, drills: {}, injuries: [], fines: [] },
       mGas: 0, mGasUsed: 0, mFlare: 0, mWellDays: 0, mWorkDays: 0, mFails: 0, mInjuries: 0, auto: { buy: false, prs: true, to: false, dgu: false, util: true, ownFuel: true }, settings: { monthReport: true }, cdStats: {}, cdReports: [], report: null,
       ckppnSet: { temp: 55, dose: 0.9, wash: false }, ppd: { comp: 100 }, quality: { water: 0.8, salt: 190, group: 3 }, techWf: 0.06,
-      pf: {}, history: [], daily: [], ledger: [], log: [], flash: [], effects: [], yearReports: [], goalsDone: {}, flags: { npzSplit: true },
+      pf: {}, history: [], daily: [], ledger: [], log: [], flash: [], effects: [], yearReports: [], goalsDone: {}, flags: { npzSplit: true, shifts24: true, sec: true, dsStaff2: true, dsStaff3: true }, guard: { npz: false, azs: false },
       mAcc: {}, yAcc: {}, mProd: 0, mLiq: 0, mInj: 0, mSold: 0, mExportRev: 0, mBrentSum: 0, mFxSum: 0, mDays: 0, yProd: 0,
       lossCarry: 0, negMonths: 0, lastEvent: 0, pending: null, gameOver: null, today: null, rank: 100, prevRank: 100, spotDay: -1, spotQty: 0
     };
@@ -2584,10 +2932,10 @@
     if (s.people.length > 6) { s.people[2].by = 2000 - 62; s.people[2].g = 'm'; s.people[5].by = 2000 - 56; s.people[5].g = s.people[5].g; }
     syncStaff(s);
     // склад
-    const st = { nkt: 80, rods: 120, gnu: 5, ecn: 0, cable: 0, skparts: 3, pparts: 3, vparts: 8, demulg: 4000, inhib: 1200, diesel: 15000, ppe: 60, deg: 300 };
+    const st = { nkt: 80, rods: 120, gnu: 5, ecn: 0, cable: 0, skparts: 3, pparts: 3, vparts: 8, npzparts: 0, trkparts: 0, npzreag: 0, npzadd: 0, trkcons: 0, demulg: 4000, inhib: 1200, diesel: 15000, ppe: 60, deg: 300 };
     for (const m of D.MATERIALS) s.stock[m.key] = st[m.key] || 0;
     initGas(s); initDs(s); initShares(s); initSoc(s);
-    initFleet(s); fleetDrivers(s); initLpg(s);
+    for (let k = 0; k < 3; k++) { initFleet(s); fleetDrivers(s); } initLpg(s);
     initCompanies(s);
     genOffers(s);
     s.flash = [];
@@ -2675,6 +3023,16 @@
     if (!s.people) { s.people = []; for (const r of D.ROLES) for (let i = 0; i < (s.staff[r.key] ? s.staff[r.key].n : 0); i++) s.people.push(makePerson(s, r.key)); }
 
     initLpg(s);
+    if (!s.guard) s.guard = { npz: false, azs: false };
+    for (const r of D.ROLES) if (!s.staff[r.key]) s.staff[r.key] = { n: 0, pct: 100 };
+    if (!s.flags.sec && s.people) { s.flags.sec = true; const nd = staffNeed(s).sec || 0, hv = s.people.filter(p => p.role === 'sec').length; if (nd > hv) addPeople(s, 'sec', nd - hv, {}); }
+    for (const k of ['npzreag', 'npzadd', 'trkcons']) if (s.stock[k] == null) s.stock[k] = 0;
+    if (!s.pc) { pcInit(s); if (facs(s, 'npz').length) pcOffers(s); }
+    if (s.stock.npzparts == null) s.stock.npzparts = facs(s, 'npz').length ? 3 : 0; if (s.stock.trkparts == null) s.stock.trkparts = facs(s, 'azs').length ? 2 : 0;
+    if (!s.flags.dsStaff3) { s.flags.dsStaff3 = s.flags.dsStaff2 = true; if (facs(s, 'npz').length) staffForShifts(s, 'npz'); if (facs(s, 'azs').length) staffForShifts(s, 'azs'); }
+    if (!s.flags.shifts24) { s.flags.shifts24 = true; if (facs(s, 'npz').length) staffForShifts(s, 'npz'); if (facs(s, 'azs').length) staffForShifts(s, 'azs'); }
+    for (const f of s.fac) { if (f.type === 'gfu') f.name = f.name.replace('ГФУ — установка получения СУГ', 'ГФУ'); if (f.type === 'lpg_tank') f.name = f.name.replace('Ёмкости СУГ 2×100 м³', 'Ёмкости СУГ'); }
+    if ((facs(s, 'gfu').length || facs(s, 'npz').length) && !facs(s, 'lpg_tank').length && !s.flags.lpgTankGift) { s.flags.lpgTankGift = true; const f = makeFac(s, 'lpg_tank', 0.9, 60e6); s.fac.push(f); }
     if (s.company.name === 'Сарыбулак Петролеум') s.company.name = 'АО «AJT»';
     if (s.company.field === 'Сарыбулак Восточный') s.company.field = 'Саура';
     // автопарк — в конце, когда все роли персонала уже есть
@@ -2709,7 +3067,7 @@
 
   const API = {
     VERSION, SAVE_KEY, BBL, PNL, PLAN_LEVELS, MONTHS, FAILS,
-    newGame, tick, advance, act, kpi, VT, RED_FUEL, ownDieselL, lpgCap, lpgWholesale, lpgRetail, lpgRetailL, azsLpgDem, LPG_PER_M3, LPG_DENS, fleetNeed, fleetEff, fleetSpeed, vehQ, fleetAvail, fleetK, ktg, vehCost, MENU, SOC_TYPES, socStats, GAS, RET, PK, blend, fixCost, fixDays, valveOpen, azsMix, azsStaffN, DS_TYPES, FUEL, SIDE, CRUDE, NPZ_UNITS, NELSON, AZS_TRAF, EXCISE, PSHARE, k5, npzCalc, unitCap, sulClass, ronName, qualF, retailOK, nelson, azsCars, azsBrand, azsEl, truckCap, azsStaffNeed, fuelMarket, fuelOwn, retailMarket, retailPrice, perLitre, npzYield, prodCap, prodCapK, ptanks, holdK, PNAME, azsDemand, compShares, compPrice, portValue, shOut, fairPrice, sharePrice, marketCap, ipoMin, dewNorm, degConc, gwellPot, GAS_PRICE_N, GAS_PRICE_P, coverage, staffNeed, assetSummary, capitalization, leaderboard, energyDemand, energySupply,
+    newGame, tick, advance, act, kpi, VT, RED_FUEL, ownDieselL, dsEnergy, dsK, npzOrg, azsOrg, PC_KIND, PC_PROD, pcPrice, pcNet, spotNet, pcFreight, pcDuty, pcOk, pcReqText, pcOffers, dsCfg, dsUse, DS_MAT, dsGroup, GUARD_FEE, secK, shiftInfo, AZS_NIGHT, LOCAL_DEPTS, npzRunK, lpgCap, lpgObjs, hazObjs, LPG_EXP, lpgWholesale, lpgRetail, lpgRetailL, azsLpgDem, LPG_PER_M3, LPG_DENS, fleetNeed, fleetEff, fleetSpeed, vehQ, fleetAvail, fleetK, ktg, vehCost, MENU, SOC_TYPES, socStats, GAS, RET, PK, blend, fixCost, fixDays, valveOpen, azsMix, azsStaffN, DS_TYPES, FUEL, SIDE, CRUDE, NPZ_UNITS, NELSON, AZS_TRAF, EXCISE, PSHARE, k5, npzCalc, unitCap, sulClass, ronName, qualF, retailOK, nelson, azsCars, azsBrand, azsEl, truckCap, azsStaffNeed, fuelMarket, fuelOwn, retailMarket, retailPrice, perLitre, npzYield, prodCap, prodCapK, ptanks, holdK, PNAME, azsDemand, compShares, compPrice, portValue, shOut, fairPrice, sharePrice, marketCap, ipoMin, dewNorm, degConc, gwellPot, GAS_PRICE_N, GAS_PRICE_P, coverage, staffNeed, assetSummary, capitalization, leaderboard, energyDemand, energySupply,
     tanks, tankCap, tankVol, capOf, facs, brigades, failMaterials, canMaterials, matPrice, leadTime, loanRate, creditLimit,
     baseRate, depositRate, hseRisk, ltifr, gasUtil, hseIndex, myParams, RPARAMS, avgFacHealth,
     baseLast, usedSurnames, ensurePF, forecastByCdng, yearOutlook, chiefEff, lastCdReport, migrate, personAge, pensionAge, yearsToPension, tenure, personSalary, deptSkill, daysToNextMonth, parts, iso, daysInMonth, has, serialize, deserialize, oilPriceT, effVal, cdngFree,

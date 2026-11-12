@@ -37,8 +37,8 @@
     gas: [['scheme', 'Схема'], ['uppg', 'УППГ'], ['mks', 'МКС и ПНГ'], ['lpg', 'СУГ'], ['gwells', 'Скважины'], ['balance', 'Баланс']],
     soc: [['camp', 'Посёлок'], ['food', 'Столовая'], ['dorm', 'Общежития']],
     fleet: [['park', 'Парк'], ['cars', 'Машины'], ['to', 'ТО и запчасти']],
-    npz: [['scheme', 'Схема'], ['kpi', 'Показатели'], ['mode', 'Режим'], ['units', 'Установки'], ['prod', 'Продукты']],
-    azs: [['net', 'Сеть'], ['st', 'Станции'], ['fin', 'Финансы'], ['price', 'Цены']],
+    npz: [['scheme', 'Схема'], ['g_prod', 'Производство', [['kpi', 'Показатели'], ['mode', 'Режим'], ['prod', 'Продукты'], ['contracts', 'Договоры']]], ['g_units', 'Установки', [['units', 'Состав'], ['repair', 'Ремонт']]], ['g_ops', 'Обеспечение', [['staff', 'Персонал'], ['energy', 'Энергия'], ['stock', 'Склад'], ['safety', 'Безопасность']]]],
+    azs: [['net', 'Сеть'], ['st', 'Станции'], ['g_trade', 'Торговля', [['fin', 'Финансы'], ['price', 'Цены']]], ['g_ops', 'Обеспечение', [['staff', 'Персонал'], ['energy', 'Энергия'], ['repair', 'Ремонт'], ['stock', 'Склад']]]],
     shares: [['my', 'Наши акции'], ['market', 'Биржа']],
     sales: [['contracts', 'Договоры'], ['offers', 'Предложения'], ['market', 'Рынок']],
     build: [['catalog', 'Объекты'], ['services', 'Услуги'], ['projects', 'Проекты']],
@@ -48,7 +48,11 @@
     events: [['log', 'События'], ['goals', 'Цели'], ['years', 'Годовые итоги']]
   };
   const BOTTOM = ['home', 'prod', 'ckppn', 'gas', 'fin'];
-  const sub = () => { const L = SUBS[ui.tab]; if (!L) return null; const v = ui.sub[ui.tab]; return v && L.some(x => x[0] === v) ? v : L[0][0]; };
+  // вкладка может быть группой: [ключ, название, [[лист, название], ...]] — тогда второй ряд вкладок
+  const leaves = L => L.flatMap(x => x[2] ? x[2].map(c => c[0]) : [x[0]]);
+  const sub = () => { const L = SUBS[ui.tab]; if (!L) return null; const v = ui.sub[ui.tab]; return v && leaves(L).includes(v) ? v : leaves(L)[0]; };
+  const subGroup = () => { const L = SUBS[ui.tab], v = sub(); return L && L.find(x => x[2] && x[2].some(c => c[0] === v)); };
+  ui.subMem = ui.subMem || {};
 
   /* ===================== проблемы и подсказки ===================== */
   function alerts() {
@@ -66,7 +70,9 @@
     else if (k.quality.group === 3) out.push({ l: 'info', t: `Нефть III группы (−4% к цене). Поднимите температуру/реагент`, go: 'ckppn:mode', tab: 'ckppn' });
     if (k.energyF < 0.999) out.push({ l: 'bad', t: `Дефицит электроэнергии: покрыто ${pct(k.energyF)}`, go: 'energy', tab: 'energy' });
     for (const [dk, name] of Object.entries(D.DEPTS)) if (k.cov.dept[dk] < 0.85) out.push({ l: k.cov.dept[dk] < 0.6 ? 'bad' : 'warn', t: `Нехватка персонала: ${name} — ${pct(k.cov.dept[dk])}`, go: 'staff', tab: 'staff' });
-    const low = D.MATERIALS.filter(m => (!m.tech || E.has(s, m.tech)) && s.stock[m.key] < m.min * 0.5 && !s.orders.some(o => o.key === m.key));
+    { const L = s.dsLack || {}; if (L.npzreag || L.npzadd) out.push({ l: 'warn', t: `Склад НПЗ: закончились ${[L.npzreag ? 'реагенты ЭЛОУ' : '', L.npzadd ? 'присадки' : ''].filter(Boolean).join(' и ')}`, go: 'npz:stock', tab: 'npz' }); if (L.trkcons) out.push({ l: 'warn', t: 'Склад АЗС: закончились фильтры ТРК', go: 'azs:stock', tab: 'azs' }); }
+    { const pa = s.pc ? s.pc.list.filter(c => c.status === 'active' && c.why) : []; if (pa.length) out.push({ l: 'warn', t: `Договоры НПЗ: отгрузка стоит по ${pa.length} — ${pa[0].why}`, go: 'npz:contracts', tab: 'npz' }); }
+    const low = D.MATERIALS.filter(m => m.group !== 'НПЗ и АЗС' && (!m.tech || E.has(s, m.tech)) && s.stock[m.key] < m.min * 0.5 && !s.orders.some(o => o.key === m.key));
     if (low.length) out.push({ l: 'warn', t: `Мало на складе: ${low.map(m => m.name).slice(0, 3).join(', ')}${low.length > 3 ? '…' : ''}`, go: 'stock', tab: 'stock' });
     if (!s.contracts.some(c => c.status === 'active')) out.push({ l: 'warn', t: 'Нет действующих договоров — нефть копится в РВС', go: 'sales:offers', tab: 'sales' });
     if (k.pressure < 80) out.push({ l: k.pressure < 70 ? 'bad' : 'warn', t: `Пластовое давление ${num(k.pressure, 1)}% — нужна закачка`, go: 'prod:res', tab: 'prod' });
@@ -129,7 +135,7 @@
               <div class="chip"><small>Место</small><b>№${s.rank}</b></div>
             </div>
           </header>
-          ${subs ? `<div class="subtabs">${subs.map(([id, n]) => `<button class="${sub() === id ? 'on' : ''}" data-sub="${id}">${n}</button>`).join('')}</div>` : ''}
+          ${subs ? (() => { const cur = sub(), grp = subGroup(); return `<div class="subtabs${grp || subs.some(x => x[2]) ? ' fit' : ''}">${subs.map(([id, n, ch]) => ch ? `<button class="${grp && grp[0] === id ? 'on' : ''} grpb" data-sub="${ui.subMem[ui.tab + ':' + id] && ch.some(c => c[0] === ui.subMem[ui.tab + ':' + id]) ? ui.subMem[ui.tab + ':' + id] : ch[0][0]}">${n}</button>` : `<button class="${cur === id ? 'on' : ''}" data-sub="${id}">${n}</button>`).join('')}</div>${grp ? `<div class="subtabs sub2">${grp[2].map(([id, n]) => `<button class="${cur === id ? 'on' : ''}" data-sub="${id}">${n}</button>`).join('')}</div>` : ''}`; })() : ''}
           <main class="page" id="page">${view()}</main>
         </div>
         <div class="timebar">
@@ -707,7 +713,7 @@
     return b.join('');
   }
   function vPeople() {
-    const ppl = s.people; const n = ppl.length || 1;
+    const ppl = s.people.filter(isUp); const n = ppl.length || 1;
     const ages = ppl.map(p => E.personAge(s, p));
     const pre = ppl.filter(p => E.yearsToPension(s, p) < 2).length;
     const yearEnd = ppl.filter(p => E.yearsToPension(s, p) < (13 - E.parts(s.day).m) / 12).length;
@@ -723,15 +729,15 @@
     list.sort(S[srt]);
     const per = 20, pages = Math.max(1, Math.ceil(list.length / per)); ui.page = Math.min(ui.page, pages - 1);
     const shown = list.slice(ui.page * per, ui.page * per + per);
-    return `<div class="kpis">
-      ${kpiTile('Численность', `${ppl.length} чел.`, `возраст ${num(ages.reduce((a, b) => a + b, 0) / n, 1)} · стаж ${ym2(ppl.reduce((a, p) => a + E.tenure(s, p), 0) / n)}`, '')}
+    return `${dsStaffNote()}<div class="kpis">
+      ${kpiTile('Численность промысла', `${ppl.length} чел.`, `возраст ${num(ages.reduce((a, b) => a + b, 0) / n, 1)} · стаж ${ym2(ppl.reduce((a, p) => a + E.tenure(s, p), 0) / n)}`, '')}
       ${kpiTile('Средняя зарплата', money(ppl.reduce((a, p) => a + E.personSalary(s, p).total, 0) / n), `квалификация К ${num(ppl.reduce((a, p) => a + p.skill, 0) / n, 2)}`, '')}
       ${kpiTile('Предпенсионеры', `${pre} чел.`, `на пенсию в этом году: ${yearEnd}`, pre ? 'warn' : '')}
       ${kpiTile('Настроение', `${num(ppl.reduce((a, p) => a + p.mood, 0) / n)}%`, `недовольных: ${ppl.filter(p => p.mood < 40).length}`, ppl.filter(p => p.mood < 40).length ? 'warn' : '')}
     </div>
     ${card('Возрастная структура', `<div class="agerow">${groups.map(g => { const c = ages.filter(a => a >= g[1] && a < g[2]).length; return `<div><b>${c}</b><i style="height:${Math.max(3, Math.round(c / Math.max(1, ...groups.map(G2 => ages.filter(a => a >= G2[1] && a < G2[2]).length)) * 46))}px"></i><small>${g[0]}</small></div>`; }).join('')}</div>`)}
     <div class="toolbar"><div class="chips scroll">${[['all', 'Все'], ['pre', 'Предпенсионеры'], ['young', 'Молодёжь'], ['sad', 'Недовольные']].map(([id, nm]) => `<button class="fchip ${f === id ? 'on' : ''}" data-act="pf" data-arg="${id}">${nm}</button>`).join('')}</div>
-      <div class="row"><label class="sel"><select data-change="pfd"><option value="">Подразделение…</option>${Object.entries(D.DEPTS).map(([k, v]) => `<option value="d:${k}" ${f === 'd:' + k ? 'selected' : ''}>${v}</option>`).join('')}${D.ROLES.map(r => `<option value="r:${r.key}" ${f === 'r:' + r.key ? 'selected' : ''}>· ${r.name}</option>`).join('')}</select></label>
+      <div class="row"><label class="sel"><select data-change="pfd"><option value="">Подразделение…</option>${Object.entries(D.DEPTS).filter(([k]) => !DS_DEPTS.includes(k)).map(([k, v]) => `<option value="d:${k}" ${f === 'd:' + k ? 'selected' : ''}>${v}</option>`).join('')}${UP_ROLES().map(r => `<option value="r:${r.key}" ${f === 'r:' + r.key ? 'selected' : ''}>· ${r.name}</option>`).join('')}</select></label>
       <label class="sel"><select data-change="ps">${[['name', 'по ФИО'], ['age', 'по возрасту'], ['tenure', 'по стажу'], ['pension', 'до пенсии'], ['skill', 'по эффективности'], ['salary', 'по зарплате']].map(([v, nm]) => `<option value="${v}" ${srt === v ? 'selected' : ''}>${nm}</option>`).join('')}</select></label></div></div>
     ${(() => { const pRow = p => { const sal = E.personSalary(s, p); const c = p.cdng && s.cdngs.find(x => x.id === p.cdng); return `<button class="prow" data-act="personCard" data-arg="${p.id}">${pFace(p, 38)}
       <div class="pr-b"><div class="pr-t"><b>${esc(p.name)}</b><span class="pk ${p.skill >= 1 ? 'good' : p.skill >= 0.8 ? 'warn' : 'bad'}">К ${p.skill.toFixed(2)}</span></div>
@@ -766,22 +772,30 @@
       <div class="btnrow pc-a">${btn('Повысить разряд', 'pOp', p.id + ':grade', 'small primary', p.grade >= 6)}${btn(`Премия (${money(sal.total)})`, 'pOp', p.id + ':bonus', 'small good')}${btn(`Обучение (${money(sal.total * 0.6)})`, 'pOp', p.id + ':train', 'small', s.day - p.lastTrain < 180)}${btn('Уволить', 'pOp', p.id + ':fire', 'small ghost')}</div>
       ${r.dept === 'cdng' ? `<div class="form"><label>Закреплён за цехом<select data-change="pcdng" data-id="${p.id}">${s.cdngs.map(x => `<option value="${x.id}" ${x.id === p.cdng ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label></div>` : ''}</div>`;
   }
+  // общий «Персонал» — только промысел (добыча и службы); штат НПЗ и АЗС — в их вкладках «Обеспечение → Персонал»
+  const DS_DEPTS = ['npz', 'retail'], UP_ROLES = () => D.ROLES.filter(r => !DS_DEPTS.includes(r.dept)), isUp = p => !DS_DEPTS.includes(ROLE(p.role).dept);
+  function dsStaffNote() {
+    const hn = E.facs(s, 'npz').length, ha = E.facs(s, 'azs').length; if (!hn && !ha) return '';
+    const cnt = d => s.people.filter(p => ROLE(p.role).dept === d).length;
+    return `<div class="dsnote">${hn ? `<button class="dsl" data-act="goStaffDs" data-arg="npz"><b>Персонал НПЗ</b><small>${cnt('npz')} чел. →</small></button>` : ''}${ha ? `<button class="dsl" data-act="goStaffDs" data-arg="azs"><b>Персонал АЗС</b><small>${cnt('retail')} чел. →</small></button>` : ''}</div>`;
+  }
   function vStaff() {
     if (sub() === 'people') return vPeople();
-    const k = E.kpi(s); const need = k.cov.need;
-    const payroll = D.ROLES.reduce((a, r) => a + s.staff[r.key].n * r.salary * s.staff[r.key].pct / 100 * idx(), 0);
-    const depts = Object.entries(D.DEPTS);
+    const k = E.kpi(s); const need = Object.fromEntries(Object.entries(k.cov.need).filter(([r]) => !DS_DEPTS.includes(ROLE(r).dept)));
+    const payroll = UP_ROLES().reduce((a, r) => a + s.staff[r.key].n * r.salary * s.staff[r.key].pct / 100 * idx(), 0);
+    const depts = Object.entries(D.DEPTS).filter(([dk]) => !DS_DEPTS.includes(dk)), upN = s.people.filter(isUp).length;
     return `
       <div class="kpis">
         <div class="kpi">${G.moodFace({ value: s.morale, min: 0, max: 100, bands: [{ to: 40, color: C.red }, { to: 60, color: C.yellow }, { to: 100, color: C.aqua }], text: num(s.morale) + '%', label: 'Мораль коллектива' })}</div>
-        ${kpiTile('Численность', `${k.staff} чел.`, `требуется ${Object.values(need).reduce((a, b) => a + b, 0)}`, '')}
+        ${kpiTile('Численность промысла', `${upN} чел.`, `требуется ${Object.values(need).reduce((a, b) => a + b, 0)}`, '')}
         ${kpiTile('ФОТ в месяц', money(payroll), `+ соц. налог ${money(payroll * 0.11)}`, '')}
-        ${kpiTile('В подборе', `${s.hires.reduce((a, h) => a + h.n, 0)} чел.`, s.hires.length ? `ближайший выход через ${Math.min(...s.hires.map(h => h.days))} дн.` : 'нет заявок', '')}
+        ${kpiTile('В подборе', `${s.hires.filter(h => !DS_DEPTS.includes(ROLE(h.role).dept)).reduce((a, h) => a + h.n, 0)} чел.`, s.hires.length ? `ближайший выход через ${Math.min(...s.hires.map(h => h.days))} дн.` : 'нет заявок', '')}
       </div>
+      ${dsStaffNote()}
       ${card('Укомплектованность подразделений', `<div class="depts">${depts.map(([dk, n]) => `<div class="dept"><span>${n}</span>${bar(k.cov.dept[dk], lvl(k.cov.dept[dk], 0.95, 0.75))}<b>${pct(k.cov.dept[dk])}</b></div>`).join('')}</div>
         <p class="hint">Нехватка людей снижает добычу, ремонты и качество, повышает риск штрафов.</p>`)}
       ${card('Штатное расписание', `<div class="btnrow s">${btn('Всем оклад 100%', 'salAll', 100, 'small')}${btn('Всем 110%', 'salAll', 110, 'small')}${btn('Всем 125%', 'salAll', 125, 'small')}${btn('Нанять по потребности', 'hireNeed', '', 'small primary')}</div>
-        <div class="roles">${D.ROLES.map(r => {
+        <div class="roles">${UP_ROLES().map(r => {
           const st = s.staff[r.key], nd = need[r.key], hire = s.hires.filter(h => h.role === r.key).reduce((a, h) => a + h.n, 0);
           const c = nd ? st.n / nd : 1;
           return `<div class="role"><div class="r-t"><b>${esc(r.name)}</b><small>${esc(D.DEPTS[r.dept])}</small></div>
@@ -793,7 +807,7 @@
   }
 
   /* ===================== ПОДРЯД И СТРОЙКА ===================== */
-  const CAT_GROUPS = [['Бурение', ['well_sk', 'well_ecn', 'well_inj', 'well_water']], ['Сбор и подготовка', ['agzu', 'upsv', 'ckppn', 'bkns', 'pump_ext', 'gascomp', 'cdng']], ['Резервуары', ['tank1000', 'tank2000', 'tank5000', 'tank10000']], ['Энергетика', ['substation', 'dgu', 'gtes', 'ses']]];
+  const CAT_GROUPS = [['Бурение', ['well_sk', 'well_ecn', 'well_inj', 'well_water']], ['Сбор и подготовка', ['agzu', 'upsv', 'ckppn', 'bkns', 'pump_ext', 'gascomp', 'gfu', 'lpg_tank', 'cdng']], ['Резервуары', ['tank1000', 'tank2000', 'tank5000', 'tank10000']], ['Энергетика', ['substation', 'dgu', 'gtes', 'ses']]];
   function vBuild() {
     const sb = sub();
     if (sb === 'services') return vServices();
@@ -841,10 +855,11 @@
 
   /* ===================== СКЛАД ===================== */
   function vStock() {
-    const groups = [...new Set(D.MATERIALS.map(m => m.group))];
-    const val = D.MATERIALS.reduce((a, m) => a + s.stock[m.key] * E.matPrice(s, m.key), 0);
+    const groups = [...new Set(D.MATERIALS.filter(m => m.group !== 'НПЗ и АЗС').map(m => m.group))];
+    const val = D.MATERIALS.filter(m => m.group !== 'НПЗ и АЗС').reduce((a, m) => a + s.stock[m.key] * E.matPrice(s, m.key), 0);
     return `<div class="kpis">${kpiTile('Стоимость запасов', money(val), '', '')}${kpiTile('В пути', `${s.orders.length} поставок`, s.orders.length ? `ближайшая через ${Math.max(1, Math.ceil(Math.min(...s.orders.map(o => o.days))))} дн.` : '', '')}${kpiTile('Срок поставки', `${E.leadTime(s)} дн.`, 'зависит от службы МТС', '')}
       <div class="kpi"><div class="k-l">Автозакупка</div><div class="k-v">${btn(s.auto.buy ? 'Включена' : 'Выключена', 'toggle', 'buy', s.auto.buy ? 'on' : '')}</div><div class="k-s">по понедельникам до 2× минимума</div></div></div>
+      ${E.facs(s, 'npz').length || E.facs(s, 'azs').length ? `<p class="hint">У НПЗ и АЗС свои склады: ${E.facs(s, 'npz').length ? btn('Склад НПЗ', 'goStock', 'npz', 'small') : ''} ${E.facs(s, 'azs').length ? btn('Склад АЗС', 'goStock', 'azs', 'small') : ''}</p>` : ''}
       ${groups.map(g => card(g, `<div class="stock">${D.MATERIALS.filter(m => m.group === g).map(m => {
         const locked = m.tech && !E.has(s, m.tech); const st = s.stock[m.key];
         const scale = ['demulg', 'inhib', 'diesel'].includes(m.key) ? Math.max(1, s.wells.length / 13) : Math.max(1, s.wells.length / 20);
@@ -904,7 +919,7 @@
         ${[...E.PNL.taxes, ...E.PNL.interest].filter(c => cur[c]).map(c => row(c, cur[c])).join('')}
         ${row('Результат (без амортизации и КПН)', rev - opex - tax - intr, 'total')}</tbody></table></div>
         <p class="hint">Зарплата, налоги и проценты начисляются в конце месяца.</p>`)}
-      ${h.length ? card('Помесячная отчётность', `<div class="tscroll"><table class="tbl"><thead><tr><th>Месяц</th><th>Добыча, т</th><th>План, т</th><th>Выручка</th><th>Затраты</th><th>Налоги</th><th>Приб.</th><th>Brent</th></tr></thead><tbody>${h.slice().reverse().map(x => `<tr><td>${ymRu(x.m)}</td><td>${num(x.fact)}</td><td>${num(x.plan)}</td><td>${money(x.rev)}</td><td>${money(x.opex)}</td><td>${money(x.taxes)}</td><td class="${x.net >= 0 ? 'tgood' : 'tbad'}">${money(x.net)}</td><td>$${num(x.brent, 1)}</td></tr>`).join('')}</tbody></table></div>`) : ''}`;
+      ${h.length ? card('Помесячная отчётность', `<div class="tscroll"><table class="tbl"><thead><tr><th>Месяц</th><th>Добыча, т</th><th>План, т</th><th>Выручка</th><th>Затраты</th><th>Налоги</th><th>Аморт. и %</th><th>Приб.</th><th>Brent</th></tr></thead><tbody>${h.slice().reverse().map(x => `<tr><td>${ymRu(x.m)}</td><td>${num(x.fact)}</td><td>${num(x.plan)}</td><td>${money(x.rev)}</td><td>${money(x.opex)}</td><td>${money(x.taxes)}</td><td>${money((x.dep || 0) + (x.interest || 0))}</td><td class="${x.net >= 0 ? 'tgood' : 'tbad'}">${money(x.net)}</td><td>$${num(x.brent, 1)}</td></tr>`).join('')}</tbody></table></div><p class="hint">Прибыль = выручка − затраты − налоги (вкл. КПН) − амортизация и проценты по кредитам.</p>`) : ''}`;
   }
   /* ===================== БАНК ===================== */
   function vBank() {
@@ -1076,10 +1091,11 @@
   function vSoc() {
     const sb = sub(), st = E.socStats(s), mor = st.morTotal;
     const kp = `<div class="kpis">
+      ${kpiTile('Вахта в посёлке', `${num(st.N)} чел.`, `местные: ${num(st.local)} чел. — НПЗ, АЗС, офис живут дома`, '')}
       ${kpiTile('Проживают', `${num(st.housed)} / ${num(st.beds)}`, st.homeless ? `без места: ${st.homeless} чел. — съём жилья` : 'койко-мест хватает', st.homeless ? 'bad' : 'good')}
       ${kpiTile('Питаются в столовой', `${num(st.fed)} / ${num(st.N)}`, `${num(st.seats)} мест в 2 смены`, st.unfed ? 'warn' : 'good')}
       ${kpiTile('Влияние на мораль', (mor >= 0 ? '+' : '') + num(mor, 1), Object.entries(st.mor).filter(([, v]) => Math.abs(v) >= 0.5).map(([k, v]) => `${k} ${v >= 0 ? '+' : ''}${num(v, 1)}`).join(' · ') || 'нейтрально', mor >= 2 ? 'good' : mor >= -2 ? '' : 'bad')}
-      ${kpiTile('Расходы на быт', money(st.food + st.rent) + '/сут', `питание ${money(st.food)}${st.rent ? ' · аренда ' + money(st.rent) : ''}`)}
+      ${kpiTile('Расходы на быт', money(st.food + st.rent) + '/сут', `питание ${money(st.food)}${st.localFood ? ` (талоны местным ${money(st.localFood)})` : ''}${st.rent ? ' · аренда ' + money(st.rent) : ''}`)}
     </div>`;
     if (sb === 'food') {
       const cans = E.facs(s, 'canteen');
@@ -1203,12 +1219,12 @@
   }
   // Советская клиновая задвижка: чугунный корпус, выдвижной шпиндель, красный маховик, табличка
   const valveMem = {};
-  function valveSvg(x, y, key, open, label) {
+  function valveSvg(x, y, key, open, label, act = 'valve', sc = 1.35) {
     const changed = valveMem[key] != null && valveMem[key] !== open; valveMem[key] = open;
     const wy = y - 40, stemTop = open ? wy - 13 : wy - 3;
     const spokes = [0, 60, 120].map(a => { const r = a * Math.PI / 180; return `<line x1="${(x - 10 * Math.cos(r)).toFixed(1)}" y1="${(wy - 10 * Math.sin(r)).toFixed(1)}" x2="${(x + 10 * Math.cos(r)).toFixed(1)}" y2="${(wy + 10 * Math.sin(r)).toFixed(1)}" stroke="#a51c1c" stroke-width="2"/>`; }).join('');
     const plate = open ? ['ОТКРЫТО', '#1e5e2a', '#cfe8c9'] : ['ЗАКРЫТО', '#7f1414', '#f6d4cf'];
-    return `<g class="valve ${open ? 'v-open' : 'v-closed'}" data-act="valve" data-arg="${key}" role="button" aria-label="${label}: ${open ? 'открыта' : 'закрыта'}" transform="translate(${x} ${y}) scale(1.35) translate(${-x} ${-y})">
+    return `<g class="valve ${open ? 'v-open' : 'v-closed'}" data-act="${act}" data-arg="${key}" role="button" aria-label="${label}: ${open ? 'открыта' : 'закрыта'}" transform="translate(${x} ${y}) scale(${sc}) translate(${-x} ${-y})">
       <rect x="${x - 24}" y="${y - 58}" width="48" height="90" fill="transparent"/>
       <rect x="${x - 17}" y="${y - 12}" width="5" height="24" rx="1" fill="#3a4148" stroke="#151a1f"/><rect x="${x + 12}" y="${y - 12}" width="5" height="24" rx="1" fill="#3a4148" stroke="#151a1f"/>
       ${[-9, 0, 9].map(d => `<circle cx="${x - 14.5}" cy="${y + d}" r="1" fill="#8d969e"/><circle cx="${x + 14.5}" cy="${y + d}" r="1" fill="#8d969e"/>`).join('')}
@@ -1247,6 +1263,70 @@
   const valveBtn = (open, act, arg, key, label) => `<button class="vbtn sm ${open ? 'on' : 'off'}" data-act="${act}" data-arg="${esc(String(arg))}" aria-label="${esc(label || 'Задвижка')}">${wheelIcon(open, key)}${label ? `<b>${esc(label)}</b>` : ''}<span class="vplate ${open ? 'po' : 'pc'}">${open ? 'ОТКРЫТО' : 'ЗАКРЫТО'}</span></button>`;
   // мини-маховик для кнопок
   const wheelIcon = (open, key) => `<svg viewBox="0 0 40 40" width="38" height="38" aria-hidden="true"><g class="v-wheel ${valveMem['b' + key] != null && valveMem['b' + key] !== open ? (open ? 'spin-open' : 'spin-close') : ''}" style="transform-origin:20px 20px">${(valveMem['b' + key] = open, '')}<circle cx="20" cy="20" r="15" fill="none" stroke="#c62828" stroke-width="4.5"/>${[0, 60, 120].map(a => { const r = a * Math.PI / 180; return `<line x1="${(20 - 14 * Math.cos(r)).toFixed(1)}" y1="${(20 - 14 * Math.sin(r)).toFixed(1)}" x2="${(20 + 14 * Math.cos(r)).toFixed(1)}" y2="${(20 + 14 * Math.sin(r)).toFixed(1)}" stroke="#a51c1c" stroke-width="2.6"/>`; }).join('')}<circle cx="20" cy="20" r="4.5" fill="#8e1616"/></g></svg>`;
+  // табло смен: 4 бригады, кто сегодня в день, кто в ночь, кто отдыхает
+  function shiftBoard(dept, title) {
+    const I = E.shiftInfo(s, dept), role = dept === 'npz' ? 'npzop' : 'azsop';
+    const sun = '<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="3.4" fill="#f0b429"/>' + [0, 45, 90, 135, 180, 225, 270, 315].map(a => { const r = a * Math.PI / 180; return `<line x1="${(8 + 5 * Math.cos(r)).toFixed(1)}" y1="${(8 + 5 * Math.sin(r)).toFixed(1)}" x2="${(8 + 7 * Math.cos(r)).toFixed(1)}" y2="${(8 + 7 * Math.sin(r)).toFixed(1)}" stroke="#f0b429" stroke-width="1.3"/>`; }).join('') + '</svg>';
+    const moon = '<svg viewBox="0 0 16 16" width="14" height="14"><path d="M10.5 2.5a5.5 5.5 0 1 0 3 9.5A6 6 0 0 1 10.5 2.5Z" fill="#9fb6e9"/></svg>';
+    const cells = ['А', 'Б', 'В', 'Г'].map((b, i) => { const exists = i < I.brig; const st = !exists ? 'none' : b === I.dayB ? 'day' : b === I.nightB ? 'night' : 'rest';
+      return `<div class="sh-b ${st}"><b>${b}</b><span>${st === 'day' ? sun + ' день' : st === 'night' ? moon + ' ночь' : st === 'rest' ? 'отдых' : 'нет людей'}</span><small>${exists ? I.crew + ' чел.' : '—'}</small></div>`; }).join('');
+    const c = I.brig >= 4 ? 'good' : I.brig === 3 ? 'warn' : 'bad';
+    return card(title, `<div class="shifts">${cells}</div>
+      <div class="kv3"><div><span>Режим</span><b class="t${c}">${I.brig >= 2 ? 'круглосуточно' : I.brig === 1 ? 'только день' : 'стоит'}</b></div><div><span>Бригад</span><b class="t${c}">${I.brig} из 4 · ${I.mode}</b></div><div><span>Операторы</span><b>${num(I.work)} / ${num(I.need)}${I.sick ? ` <small>(болеют ${I.sick})</small>` : ''}</b></div></div>
+      ${I.brig < 4 ? `<div class="btnrow">${btn(`Нанять до 4 бригад (+${Math.max(0, I.need - I.have)})`, 'hire', role, 'small primary', I.need <= I.have)}</div>` : ''}
+      <p class="hint">Смены по 12 часов: 8:00–20:00 и 20:00–8:00, график 2 через 2. Ночные часы оплачиваются +50%. При 3 бригадах — сверхурочные (×1,5) и усталость, при 2 — работа 12/12 без выходных, при 1 бригаде ${dept === 'npz' ? 'непрерывный процесс НПЗ не удержать — завод останавливается' : `АЗС работает только днём и теряет ночные продажи (${pct(E.AZS_NIGHT.road)} на трассе, ${pct(E.AZS_NIGHT.city)} в городе)`}.</p>`);
+  }
+  // звук пуска / останова: маховик задвижки, затем розжиг горелок или сброс давления
+  const npzRunSnd = start => { SND.play('valve'); setTimeout(() => SND.play(start ? 'fire' : 'hiss'), 700); if (start) setTimeout(() => SND.play('motor'), 1400); };
+  /* ---------- Безопасность: одна на все опасные объекты (НПЗ, СУГ, газовые колонки) ---------- */
+  function vSafety() {
+    const H = s.hse, ob = E.hazObjs(s), i = idx();
+    const due = ob.filter(f => s.day > (f.lpgExp ?? Infinity) - 90), over = ob.filter(f => s.day > (f.lpgExp ?? Infinity));
+    const pbOk = ob.length ? (ob.length - over.length) / ob.length : 1;
+    const tile = (l, v, c, sub) => `<div class="kpi ${c}"><div class="k-l">${l}</div><div class="k-v">${v}</div>${sub}</div>`;
+    const lv = v => v >= 65 ? 'good' : v >= 40 ? 'warn' : 'bad';
+    const fireOver = s.day - (H.drills.fire ?? -999) > 183;
+    const kp = `<div class="kpis">
+      ${tile('Промышленная безопасность', ob.length ? pct(pbOk) : '—', over.length ? 'bad' : due.length ? 'warn' : 'good', `${segBar(pbOk, over.length ? 'bad' : due.length ? 'warn' : 'good')}<div class="k-s">${ob.length ? `экспертиза: просрочено ${over.length}, скоро ${due.length - over.length}` : 'опасных объектов нет'}</div>`)}
+      ${tile('Пожарная безопасность', num(H.readiness) + '%', lv(H.readiness), `${segBar(H.readiness / 100, lv(H.readiness))}<div class="k-s">${fireOver ? '<span class="tbad">пожарные учения просрочены</span>' : 'учения проведены вовремя'}</div>`)}
+      ${tile('БиОТ (культура безопасности)', num(H.culture) + '%', lv(H.culture), `${segBar(H.culture / 100, lv(H.culture))}<div class="k-s">дней без травм: ${num(H.daysNoInj)}</div>`)}
+    </div>`;
+    const grp = (title, list) => !list.length ? '' : `<div class="vlist">${list.map(f => { const dd = (f.lpgExp ?? s.day + E.LPG_EXP) - s.day, off = (f.lpgOff || 0) > s.day;
+      return `<div class="vitem ${dd < 0 || f.status !== 'ok' || off ? 'off' : ''}"><div class="vi-h"><b>${esc(f.name)}${f.type === 'azs' ? ' · газовая колонка' : ''}</b><span class="vst ${dd < 0 ? 'bad' : dd < 90 ? 'warn' : 'good'}">${dd < 0 ? 'экспертиза просрочена' : 'экспертиза через ' + dd + ' дн'}</span></div>
+        <div class="vi-m"><small class="${f.health < 40 ? 'tbad' : ''}">износ ${Math.round(100 - f.health)}%</small>${f.status !== 'ok' ? '<small class="tbad">· не в работе</small>' : ''}${off ? '<small class="tbad">· закрыта после аварии</small>' : ''}</div></div>`; }).join('')}</div>`;
+    const npzL = ob.filter(f => f.type !== 'azs' && f.type !== 'gfu' && f.type !== 'lpg_tank'), lpgL = ob.filter(f => f.type === 'gfu' || f.type === 'lpg_tank'), azsL = ob.filter(f => f.type === 'azs');
+    const body = !ob.length ? '<p class="hint">Опасных производственных объектов пока нет: они появятся вместе с НПЗ, ГФУ, ёмкостями СУГ и газовыми колонками АЗС.</p>' :
+      `${npzL.length ? group('sf:npz', 'Установки и парк НПЗ', `${npzL.length} об.`, grp('', npzL), npzL.some(f => s.day > (f.lpgExp ?? Infinity) - 90)) : ''}
+       ${lpgL.length ? group('sf:lpg', 'ГФУ и ёмкости СУГ', `${lpgL.length} об.`, grp('', lpgL), lpgL.some(f => s.day > (f.lpgExp ?? Infinity) - 90)) : ''}
+       ${azsL.length ? group('sf:azs', 'Газовые колонки АЗС', `${azsL.length} шт`, grp('', azsL), azsL.some(f => s.day > (f.lpgExp ?? Infinity) - 90)) : ''}`;
+    return `${kp}${card('Опасные производственные объекты', `<div class="btnrow" style="margin-bottom:8px">${btn(due.length ? `Провести экспертизу ПБ (${due.length}) · ${money(due.length * 3e6 * i)}` : 'Экспертиза не требуется', 'lpgExp', '', due.length ? 'small primary' : 'small', !due.length)}</div>${body}
+      <p class="hint">Экспертиза промышленной безопасности — раз в 4 года на каждый объект (можно за 90 дней до срока). Просрочка — штраф Комитета промбезопасности 8 млн ₸ за объект и выше риск аварий. Утечки и пожары на объектах СУГ чаще при износе и низкой готовности к ЧС.</p>`)}
+      ${(() => { const k = E.secK(s), need = E.staffNeed(s).sec || 0, have = s.staff.sec ? s.staff.sec.n : 0, G0 = s.guard || {}, nA = E.facs(s, 'azs').length, hasN = E.facs(s, 'npz').length;
+        return card('Охрана: СБ и охранная фирма', `<div class="kv3"><div><span>Служба безопасности (вахта)</span><b class="${k >= 0.9 ? 'tgood' : k >= 0.6 ? 'twarn' : 'tbad'}">${num(have)} / ${num(need)} чел.</b></div><div><span>Охват промысла</span><b>${pct(k)}</b></div><div><span>Охрана НПЗ / АЗС</span><b>${G0.npz ? 'есть' : 'нет'} / ${G0.azs ? 'есть' : 'нет'}</b></div></div>
+          ${have < need ? `<div class="btnrow">${btn(`Нанять в СБ (+${need - have})`, 'hire', 'sec', 'small primary')}</div>` : ''}
+          <div class="brig tumrow">${tumbler(!!G0.npz, 'guardT', 'npz', 'Охрана НПЗ')}<div><b>Охранная фирма на НПЗ</b><small>${hasN ? `${money(E.GUARD_FEE.npz * idx())}/мес · без охраны — хищения с товарного парка` : 'НПЗ пока нет'}</small></div></div>
+          <div class="brig tumrow">${tumbler(!!G0.azs, 'guardT', 'azs', 'Охрана АЗС')}<div><b>Охранная фирма на АЗС</b><small>${nA ? `${money(E.GUARD_FEE.azs * idx() * nA)}/мес за ${nA} ст. · без охраны — ночные ограбления` : 'АЗС пока нет'}</small></div></div>
+          <p class="hint">СБ живёт на вахте и охраняет промысел: скважины, кабели, трубопроводы. Чем меньше людей в СБ, тем чаще кражи кабеля (скважина встаёт) и врезки в нефтепровод. НПЗ и АЗС охраняет нанятая охранная фирма — по договору с ежемесячной оплатой.</p>`); })()}
+      ${card('Пожарная безопасность и БиОТ', `<p>Учения, медосмотры и обучение проводятся в разделе «ОТ, ПБ и экология».</p><div class="btnrow">${btn('Пожарные учения', 'hseOp', 'drill:fire', 'small')}${btn('Обучение по ОТ', 'hseOp', 'training', 'small')}${btn('Открыть ОТ и ПБ', 'goHse', '', 'small ghost')}</div>`)}`;
+  }
+  // пульт пуска / останова НПЗ
+  function npzPult() {
+    if (!E.facs(s, 'npz').length) return '';
+    const N = s.np, run = N.run || 'on', rk = E.npzRunK(s), d = dsT();
+    const tF = run === 'off' ? 40 : Math.round(40 + (N.t1 - 40) * (run === 'stop' ? 0.45 : rk));
+    const lamp = (on, col, txt, blink) => `<div class="plamp ${on ? 'on' : ''} ${blink && on ? 'blink' : ''}" style="--lc:${col}"><i></i><span>${txt}</span></div>`;
+    const stTxt = run === 'on' ? 'Технологический режим' : run === 'start' ? `Пуск: сутки ${Math.min(3, (N.runD || 0) + 1)} из 3 · загрузка ${pct(rk)}` : run === 'stop' ? 'Останов: освобождение колонн · загрузка 40%' : 'Завод остановлен · печи погашены';
+    const isOpen = run === 'on' || run === 'start';
+    return card('Пульт НПЗ: задвижка сырья', `<div class="pult">
+      <div class="pult-l">${G.gauge({ value: tF, min: 0, max: 450, bands: [{ to: 300, color: C.blue }, { to: 380, color: C.aqua }, { to: 450, color: C.red }], text: tF + '°C', label: 'Печь П-1', face: 'ТЕРМОМЕТР °C', fmt: v => Math.round(v) })}</div>
+      <div class="pult-r">
+        <div class="plamps">${lamp(run === 'on', '#3fae4a', 'РАБОТА')}${lamp(run === 'start', '#f0b429', 'ПУСК', true)}${lamp(run === 'stop', '#f0b429', 'ОСТАНОВ', true)}${lamp(run === 'off', '#e5534b', 'СТОП')}</div>
+        <b class="pult-st">${stTxt}</b>
+        <small>Сырьё на ЭЛОУ-АТ: ${num(d.feed, 1)} т/сут из ${num(s.ds.feed)} заданных</small>
+        <div class="btnrow">${isOpen ? btn('Закрыть задвижку — останов', 'npzRun', 'stop', 'small danger', run === 'stop') : btn(`Открыть задвижку — пуск · ${money(4e6 * idx())}`, 'npzRun', 'start', 'small primary', run === 'start')}</div>
+      </div></div>
+      <p class="hint">Пуск занимает 3 суток (загрузка 30 → 60 → 90%, затем режим), останов — 1 сутки. Каждый останов изнашивает установки (термоциклирование, −1,5%), пуск стоит денег на разогрев печей. Пока завод стоит, нефть копится в РВС, а отгрузка продуктов из парка продолжается. Задвижку можно крутить и на схеме — на линии сырья.</p>`);
+  }
   function npzScheme() {
     const d = dsT(), R = npzR(), on = d.feed > 0.5, P = s.prodStock, N = s.np, Cc = s.cat;
     const dur = f => Math.max(0.6, Math.min(5, 5 / ((f || 0) / 40 + 0.25))).toFixed(2);
@@ -1263,7 +1343,7 @@
     const TK = { ai: 40, a95: 132, a98: 224, dt: 320, mz: 588 };
     return `<svg class="scheme npz" viewBox="0 0 1700 760" role="img" aria-label="Технологическая схема НПЗ">
       ${nest(G.tank({ v: E.kpi(s).oilTank.v, c: E.kpi(s).oilTank.c, purpose: 'oil', w: 100, h: 92, id: 'nz0' }), 10, 300)}${lbl(60, 412, 'Нефть, РВС')}
-      ${pipe('M110 346 H150', d.feed, C.orange)}${lbl(130, 336, t(d.feed))}
+      ${pipe('M110 346 H150', d.feed, C.orange)}${has('npz') ? valveSvg(130, 346, 'crude', N.run === 'on' || N.run === 'start', 'Задвижка сырья', 'valve', 0.85) : ''}${lbl(130, 384, t(d.feed))}
       ${box(150, 300, 140, 92, 'ЭЛОУ', R ? `соли ${num(R.saltIn)} → ${num(R.saltOut, 1)}` : '—', `мг/л · ${N.elT}°C`, st('npz', R && R.saltOut > 3), R ? `вода ${num(R.waterOut, 2)}%` : '')}
       ${pipe('M290 346 H320', d.feed, C.orange)}
       ${box(320, 300, 130, 92, 'Печь П-1', on ? `${N.t1}°C` : '—', R ? `топливо ${num(R.fuel, 1)} т` : '', st('npz', R && R.coke > 0), R && R.coke > 0 ? 'КОКСОВАНИЕ' : 'отбор ' + (R ? pct(R.rec) : '—'))}
@@ -1323,6 +1403,99 @@
       ${g(Math.log10(Math.max(1, sul)), 0, 3.6, [{ to: 1, color: C.aqua }, { to: 2.55, color: C.yellow }, { to: 3.6, color: C.red }], num(sul) + ' ppm', 'Сера в ДТ', v => { const x = Math.pow(10, v); return x >= 1000 ? String(Math.round(x / 100) * 100) : x >= 100 ? String(Math.round(x / 10) * 10) : String(Math.round(x)); })}
       ${g(R ? R.saltOut : 0, 0, 15, [{ to: 3, color: C.aqua }, { to: 6, color: C.yellow }, { to: 15, color: C.red }], R ? num(R.saltOut, 1) + ' мг/л' : '—', 'Соли после ЭЛОУ')}
     </div>`;
+  }
+  /* ===== НПЗ и АЗС как отдельные объекты: персонал, энергия, снабжение ===== */
+  const DS_ROLE_FX = { npzdir: 'управление НПЗ: план, бюджет, люди', npzce: 'отвечает за ОПО; нет — штраф и аварии', npztech: 'режимы установок, отбор', npzglmech: 'ППР, ремонты, запчасти', npzglen: 'энергослужба НПЗ', npzmetr: 'КИПиА, поверка приборов', npzpto: 'проекты, документация, ППР', npzhse: 'допуски, наряды; нет — штраф', npzlabhead: 'ОТК, паспорта качества', npzshift: '1 на бригаду: руководит сменой', npzemaster: 'подстанция и сети НПЗ',
+    npzop: 'ведут установки, 4 бригады', npzlab: 'анализы каждые 2 ч', npzmech: 'ремонт насосов, теплообменников', npzelec: 'дежурство 24/7 на подстанции', npzkip: 'датчики, клапаны, ПАЗ',
+    azsnet: 'цены, закупка, маркетинг сети', azseng: 'ремонты и поверка ТРК', azsmgr: '1 на станцию: касса и резервуары', azsop: 'отпуск топлива, смены', azstech: 'профилактика колонок', azselec: 'электрика, освещение, навес' };
+  const NPZ_SVC = [['mgmt', 'Управление', 'Директор, главный инженер', '−6% мощности'], ['tech', 'Технология', 'Гл. технолог, начальники смен', '−4% мощности'], ['mech', 'Механика', 'Гл. механик, слесари', 'износ ↑, ремонт ×1,5'], ['en', 'Энергетика', 'Гл. энергетик, мастер, электромонтёры', 'отключения, перерасход до 8%'], ['kip', 'КИПиА', 'Гл. метролог, слесари КИПиА', '−5% мощности, штраф'], ['lab', 'Лаборатория', 'Нач. лаборатории, лаборанты', '< 50% — опт −5%'], ['safe', 'Промбезопасность', 'Инженеры ПБ и ОТ, ПТО, гл. инженер', 'аварии при износе']];
+  const AZS_SVC = [['net', 'Управление сетью', 'Начальник сети', '−5% клиентов'], ['mgr', 'Управляющие', '1 на станцию', 'недостачи, −15% магазина'], ['tech', 'Сервис ТРК', 'Инженер-механик, техники', 'износ колонок ×1,6'], ['en', 'Электрика', 'Электромонтёры', 'простои, перерасход']];
+  function dsUnit(dept, sb) {
+    const isN = dept === 'npz', i = idx(), has = isN ? E.facs(s, 'npz').length > 0 : E.facs(s, 'azs').length > 0;
+    const nm = isN ? 'НПЗ' : 'АЗС';
+    if (!has) return card(nm, `<p class="hint">Объект ещё не построен. Здесь появятся его ${sb === 'staff' ? 'штат и сотрудники' : sb === 'energy' ? 'энергопотребление' : sb === 'repair' ? 'оборудование и авторемонт' : 'склад и транспорт'}.</p>`);
+    if (sb === 'staff') {
+      const roles = D.ROLES.filter(r => r.dept === dept), need = E.staffNeed(s), ppl = s.people.filter(p => ROLE(p.role).dept === dept);
+      const payroll = sum(roles, r => s.staff[r.key].n * r.salary * s.staff[r.key].pct / 100 * i), haveT = ppl.length, needT = sum(roles, r => need[r.key] || 0);
+      const SI = E.shiftInfo(s, dept), n = Math.max(1, ppl.length);
+      const pRow = p => { const sal = E.personSalary(s, p); return `<button class="prow" data-act="personCard" data-arg="${p.id}">${pFace(p, 38)}
+        <div class="pr-b"><div class="pr-t"><b>${esc(p.name)}</b><span class="pk ${p.skill >= 1 ? 'good' : p.skill >= 0.8 ? 'warn' : 'bad'}">К ${p.skill.toFixed(2)}</span></div>
+          <small class="pr-m">${yrs(E.personAge(s, p))} · стаж ${ym2(E.tenure(s, p))} · ${p.grade} разр. · ${money(sal.total)}${p.mood < 40 ? ' · <span class="tbad">недоволен</span>' : ''}</small></div></button>`; };
+      return `<div class="kpis">
+        ${kpiTile('Штат ' + nm, `${haveT} / ${needT}`, `укомплектованность ${pct(needT ? haveT / needT : 1)}`, lvl(needT ? haveT / needT : 1, 0.95, 0.75))}
+        ${kpiTile('Бригад в смене', `${SI.brig} из 4`, SI.brig >= 4 ? 'график 24/7 полный' : SI.brig >= 2 ? 'переработки' : 'круглосуточно не работают', SI.brig >= 4 ? 'good' : SI.brig >= 2 ? 'warn' : 'bad')}
+        ${kpiTile('ФОТ в месяц', money(payroll), `+ соц. налог ${money(payroll * 0.11)}`, '')}
+        ${kpiTile('Настроение', `${num(sum(ppl, p => p.mood) / n)}%`, `К ср. ${num(sum(ppl, p => p.skill) / n, 2)}`, sum(ppl, p => p.mood) / n < 45 ? 'warn' : '')}
+      </div>
+      ${(() => { const O = isN ? E.npzOrg(s) : E.azsOrg(s), SV = isN ? NPZ_SVC : AZS_SVC, cv = r => { const nd = need[r] || 0; return nd ? Math.min(1, s.staff[r].n / nd) : 1; }, lamp = r => `<i class="ol ${cv(r) >= 1 ? 'g' : cv(r) >= 0.5 ? 'y' : 'r'}"></i>`;
+        const node = (r, sh) => `<div class="onode">${lamp(r)}<b>${esc(sh || ROLE(r).name)}</b><small>${s.staff[r].n}/${need[r] || 0}</small></div>`;
+        const tree = isN ? `<div class="org"><div class="orow">${node('npzdir')}</div><div class="orow">${node('npzce')}</div>
+            <div class="orow o3">${node('npztech', 'Гл. технолог')}${node('npzglmech', 'Гл. механик')}${node('npzglen', 'Гл. энергетик')}${node('npzmetr', 'Гл. метролог')}${node('npzlabhead', 'Нач. лаборатории')}${node('npzhse', 'Инж. ПБ и ОТ')}${node('npzpto', 'Инж. ПТО')}</div>
+            <div class="orow o3">${node('npzshift', 'Нач. смен')}${node('npzmech', 'Слесари')}${node('npzemaster', 'Мастер энерг.')}${node('npzkip', 'КИПиА')}${node('npzlab', 'Лаборанты')}</div>
+            <div class="orow o3">${node('npzop', 'Операторы')}${node('npzelec', 'Электромонтёры')}</div></div>`
+          : `<div class="org"><div class="orow">${node('azsnet')}</div><div class="orow o3">${node('azseng', 'Инж.-механик')}${node('azsmgr', 'Управляющие')}</div><div class="orow o3">${node('azstech', 'Техники ТРК')}${node('azselec', 'Электромонтёры')}${node('azsop', 'Операторы')}</div></div>`;
+        return card('Структура ' + nm + ' и службы', `${tree}<div class="svc">${SV.map(([k, n2, who, fx]) => `<div class="sv"><div><b>${n2}</b><small>${who}</small></div>${segBar(O[k], O[k] >= 0.95 ? 'good' : O[k] >= 0.5 ? 'warn' : 'bad')}<small class="${O[k] >= 0.95 ? 'tgood' : 'twarn'}">${O[k] >= 0.95 ? 'норма' : fx}</small></div>`).join('')}</div>
+          <p class="hint">Лампа: зелёная — укомплектовано, жёлтая — частично, красная — пусто. ${isN ? 'Цепочка как на реальном НПЗ: директор → главный инженер → главные специалисты → начальники смен → рабочие.' : 'Начальник сети → инженер-механик и управляющие станций → техники, электромонтёры, операторы.'}</p>`); })()}
+      ${card('Штатное расписание ' + nm, [['itr', 'ИТР (руководство)', roles.filter(r => r.itr)], ['wrk', 'Рабочие', roles.filter(r => !r.itr)]].map(([gk, gt, rl]) => { const h = sum(rl, r => s.staff[r.key].n), nd2 = sum(rl, r => need[r.key] || 0); return group('dsr:' + dept + gk, gt, `${h} / ${nd2} чел`, `<div class="roles">${rl.map(r => { const st = s.staff[r.key], nd = need[r.key] || 0, hire = s.hires.filter(h => h.role === r.key).reduce((a, h) => a + h.n, 0), c = nd ? st.n / nd : 1;
+        return `<div class="role"><div class="r-t"><b>${esc(r.name)}</b><small>${esc(DS_ROLE_FX[r.key] || '')}</small></div>
+          <div class="r-n"><b class="${c < 0.85 ? 'tbad' : c < 1 ? 'twarn' : 'tgood'}">${st.n}</b><small>/ ${nd}${hire ? ` (+${hire})` : ''}</small></div>
+          <div class="r-s"><small>Оклад</small><b>${num(r.salary * st.pct / 100 * i)} ₸</b></div>
+          <div class="r-a">${btn('+ Нанять', 'hire', r.key, 'small primary')}${btn('Уволить', 'fire', r.key, 'small ghost', st.n < 1)}</div></div>`; }).join('')}</div>`, h < nd2); }).join('') + `<div class="btnrow" style="margin-top:8px">${btn('Нанять весь штат по потребности', 'hireDept', dept, 'small primary')}</div>
+        <p class="hint">Персонал ${nm} — местный: живёт дома, в вахтовый посёлок не входит. Работает по сменам 4 бригадами.</p>`)}
+      ${card('Сотрудники ' + nm, ppl.length ? `<div class="plist">${roles.filter(r => ppl.some(p => p.role === r.key)).map(r => { const ps = ppl.filter(p => p.role === r.key).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+        return group('ds:' + r.key, esc(r.name), `${ps.length} чел · К ${(sum(ps, p => p.skill) / ps.length).toFixed(2)}`, ps.map(pRow).join(''), ps.some(p => p.mood < 40)); }).join('')}</div>` : '<div class="empty">Сотрудников пока нет</div>')}`;
+    }
+    const DE = E.dsEnergy(s)[isN ? 'npz' : 'azs'];
+    if (sb === 'energy') {
+      const items = Object.entries(DE.items).sort((a, b) => b[1] - a[1]), mx = Math.max(1, ...items.map(x => x[1]));
+      return `<div class="kpis">
+        ${kpiTile('Нагрузка', num(DE.total) + ' кВт', isN ? 'отдельный фидер 10 кВ' : 'городская / районная сеть', '')}
+        ${kpiTile('За сутки', num(DE.kwh) + ' кВт·ч', `в месяц ≈ ${num(DE.kwh * 30 / 1000)} МВт·ч`, '')}
+        ${kpiTile('Оплата в сутки', money(DE.cost), `${num(2.6 * i, 2)} ₸/кВт·ч`, '')}
+        ${kpiTile('В месяц', money(DE.cost * 30), DE.loss > 0.5 ? `<span class="twarn">перерасход ${num(DE.loss)} кВт — неполная энергослужба</span>` : isN ? 'не зависит от энергетики промысла' : 'на все станции сети', DE.loss > 0.5 ? 'warn' : '')}
+      </div>
+      ${card('Потребители ' + nm, `<div class="depts">${items.map(([k, v]) => `<div class="dept"><span>${esc(k)}</span>${bar(v / mx, 'good')}<b>${num(v)} кВт</b></div>`).join('')}</div>
+        <p class="hint">${isN ? 'Установки берут 25% мощности на холостом ходу и до 100% при полной загрузке. При останове НПЗ — только дежурное освещение и КИПиА.' : 'ТРК, освещение навеса, касса; кафе +8 кВт, мойка +12 кВт. Летом кондиционеры, зимой обогрев.'}</p>`)}`;
+    }
+    const g = isN ? 'npz' : 'azs', S = E.dsCfg(s), objs = s.fac.filter(f => E.dsGroup(f) === g), lack = s.dsLack || {};
+    const opt = (k, val, list, suf) => `<label class="sel"><select data-change="dsset" data-g="${g}" data-k="${k}">${list.map(v => `<option value="${v}" ${val === v ? 'selected' : ''}>${v}${suf}</option>`).join('')}</select></label>`;
+    if (sb === 'repair') {
+      const C = S.fix[g], list = objs.slice().sort((a, b) => (b.status === 'fail') - (a.status === 'fail') || a.health - b.health), svc = objs.filter(f => f.status === 'service').length, low = objs.filter(f => f.status === 'fail' || f.health < C.at).length;
+      const pk = isN ? 'npzparts' : 'trkparts', avgH = objs.length ? sum(objs, f => f.health) / objs.length : 100;
+      return `<div class="kpis">
+        ${kpiTile('Средний износ', pct(1 - avgH / 100), `${objs.length} ед. оборудования`, avgH < 50 ? 'bad' : avgH < 70 ? 'warn' : 'good')}
+        ${kpiTile('В ремонте', `${svc}`, `ниже порога: ${low}`, low ? 'warn' : 'good')}
+        ${kpiTile('ЗИП на складе', `${num(s.stock[pk])} компл`, `ТР — 1, КР — ${isN ? 3 : 2} компл`, s.stock[pk] < 1 ? 'bad' : s.stock[pk] < 3 ? 'warn' : 'good')}
+        ${kpiTile('Слесари / техники', pct(isN ? E.npzOrg(s).mech : E.azsOrg(s).tech), isN ? 'служба механика' : 'сервис ТРК', (isN ? E.npzOrg(s).mech : E.azsOrg(s).tech) < 0.5 ? 'bad' : '')}
+      </div>
+      ${card('Авторемонт ' + nm, `<div class="brig tumrow">${tumbler(C.on, 'dsFixT', g, 'Авторемонт ' + nm)}<div><b>${C.on ? 'Включён' : 'Выключен'}</b><small>каждый день проверяет износ и ставит в ремонт самое изношенное оборудование</small></div></div>
+        <div class="form row3"><label>Ремонт при износе<br>${opt('at', 100 - C.at, [20, 30, 40, 50, 60, 70], '%+')}</label><label>Капремонт при износе<br>${opt('kr', 100 - C.kr, [60, 70, 80, 90, 100], '%+')}</label><label>Одновременно<br>${opt('max', C.max, [1, 2, 3, 4, 5], ' об.')}</label></div>
+        <p class="hint">Текущий ремонт: +30% ресурса, ${isN ? '4' : '2'} сут. Капитальный: ресурс 100%, ${isN ? '20' : '7'} сут. Нужны деньги (≥ 3× стоимости) и ЗИП со склада ${nm}. ${isN ? 'Установка в ремонте не работает — для НПЗ держите «одновременно 1».' : 'Станция в ремонте закрыта.'}</p>`)}
+      ${card('Оборудование ' + nm, `<div class="gwells">${list.map(f => `<div class="gwell ${f.status === 'ok' ? 'work' : 'fail'}"><div class="w-h"><b>${esc(f.name)}</b>${facPill(f)}</div>
+        ${bar(f.health / 100, f.health < 25 ? 'bad' : f.health < C.at + 10 ? 'warn' : 'good')}<small>ресурс ${Math.round(f.health)}% · ${f.status === 'service' ? `в ремонте ещё ${f.serviceDays} сут` : f.health < C.kr ? 'нужен капремонт' : f.health < C.at ? 'нужен текущий ремонт' : 'исправно'}</small>
+        <div class="btnrow">${fixBtns(f)}</div></div>`).join('')}</div>`)}`;
+    }
+    // склад и транспорт
+    const W = S.wh[g], U = E.dsUse(s), mats = E.DS_MAT[g].map(k => D.MATERIALS.find(m => m.key === k));
+    const fire = s.fleet ? s.fleet.cars.filter(c => c.type === 'fire') : [];
+    const trans = isN
+      ? `<div class="vlist">${fire.length ? fire.map(c => `<div class="vitem"><b>${G.icon('truck')} ${esc(D.VEH.fire.name)}</b><small>${c.status === 'ok' ? '<span class="tgood">на дежурстве</span>' : '<span class="tbad">неисправна</span>'} · износ ${Math.round(100 - c.health)}% · топливо ${pct((c.fl || 0) / D.VEH.fire.tank)}</small></div>`).join('') : (s.fleet && s.fleet.rent ? `<p class="twarn">Своей пожарной машины нет — дежурит наёмная по договору (дороже). Без неё — штраф Промбезопасности.</p>` : `<p class="tbad">Пожарной машины нет, наём выключен — инспекция Промбезопасности выпишет штраф.</p>`)}</div>
+         <div class="btnrow">${btn('Купить пожарную · ' + money(D.VEH.fire.cost * i), 'vbuy', 'fire', 'small primary')}${btn('Весь автопарк', 'goFleet', '', 'small')}</div>`
+      : `<div class="kpis">${kpiTile('Свои бензовозы', `${s.ds.trucks} шт`, `${num(E.truckCap(s))} т/сут`, '')}${kpiTile('Наём перевозчика', num(dsT().hired, 1) + ' т/сут', 'дороже своих', dsT().hired > 0 ? 'warn' : 'good')}</div>
+         <div class="btnrow">${btn('Купить бензовоз · ' + money(25e6 * i), 'trucks', s.ds.trucks + 1, 'small primary')}${s.ds.trucks > 0 ? btn('Продать один', 'trucks', s.ds.trucks - 1, 'small') : ''}</div>`;
+    const FX = { npzparts: 'ремонты установок и РВС', npzreag: 'ЭЛОУ; нет — обессоливание хуже, коррозия', npzadd: 'бензин и ДТ; нет — опт −3%', trkparts: 'ремонт колонок', trkcons: 'нет — износ ТРК ×1,5, −5% клиентов' };
+    const val = sum(mats, m => (s.stock[m.key] || 0) * E.matPrice(s, m.key));
+    return `<div class="kpis">
+      ${kpiTile('Склад ' + nm, money(val), `${mats.length} позиций`, mats.some(m => lack[m.key]) ? 'bad' : '')}
+      ${kpiTile('В пути', `${s.orders.filter(o => E.DS_MAT[g].includes(o.key)).length} заказ.`, `поставка ${E.leadTime(s)} дн`, '')}
+    </div>
+    ${card('Автозакупка склада ' + nm, `<div class="brig tumrow">${tumbler(W.auto, 'dsWhT', g, 'Автозакупка ' + nm)}<div><b>${W.auto ? 'Включена' : 'Выключена'}</b><small>заказывает, когда остатка хватит меньше чем на срок поставки + неделю</small></div></div>
+      <div class="form"><label>Пополнять до запаса на ${opt('days', W.days, [15, 30, 60, 90], ' сут')}</label></div>`)}
+    ${card('Склад ' + nm, `<div class="whl">${mats.map(m => { const st = s.stock[m.key] || 0, u = U[m.key] || 0, dl = u > 0 ? st / u : null, tr = sum(s.orders.filter(o => o.key === m.key), o => o.qty);
+      return `<div class="wh ${lack[m.key] ? 'bad' : ''}"><div class="wh-t"><b>${esc(m.name)}</b><small>${FX[m.key]}</small></div>
+        <div class="wh-n"><b class="${lack[m.key] || (dl != null && dl < 5) ? 'tbad' : dl != null && dl < 15 ? 'twarn' : 'tgood'}">${num(st, st < 10 ? 2 : 0)} ${m.unit}</b><small>${u > 0 && m.key !== 'npzparts' && m.key !== 'trkparts' ? `расход ${num(u, u < 1 ? 3 : 1)}/сут · ${dl == null ? '—' : num(dl) + ' сут'}` : 'по ремонтам'}${tr ? ` · в пути ${num(tr, 1)}` : ''}</small></div>
+        <div class="wh-a">${btn(`+${m.min}`, 'buy', `${m.key}:${m.min}`, 'small')}${btn('Купить…', 'buyForm', m.key, 'small primary')}</div></div>`; }).join('')}</div>`)}
+    ${card(isN ? 'Транспорт НПЗ' : 'Транспорт АЗС', trans)}`;
   }
   function vNpz() {
     const sb = sub(), d = dsT(), hasN = has('npz'), R = npzR(), mg = npzMargin(), N = s.np;
@@ -1386,7 +1559,7 @@
     }
     if (sb === 'units') {
       return `<div class="kpis">${kpiTile('Индекс Нельсона', num(E.nelson(s), 1), 'сложность НПЗ')}${kpiTile('Глубина', R ? pct(R.depth, 1) : '—', 'переработки')}${kpiTile('Средний износ', pct(1 - avgH(NPZ_LIST()) / 100), 'установок НПЗ', avgH(NPZ_LIST()) < 50 ? 'bad' : avgH(NPZ_LIST()) < 70 ? 'warn' : 'good')}</div>
-        ${card('Ремонты', `<label class="check"><input type="checkbox" data-change="autofix" ${s.ds.autoFix ? 'checked' : ''}> Автоматический текущий ремонт при износе выше 60%</label><p class="hint">Текущий ремонт: +30% ресурса, остановка 4 сут. Капитальный: ресурс 100%, остановка 20 сут. Износ выше 75% — аварийные остановки.</p>`)}
+        ${card('Ремонты', `<p>Авторемонт НПЗ: <b class="${E.dsCfg(s).fix.npz.on ? 'tgood' : 'twarn'}">${E.dsCfg(s).fix.npz.on ? 'включён' : 'выключен'}</b> ${btn('Настроить', 'goRepair', 'npz', 'small')}</p><p class="hint">Текущий ремонт: +30% ресурса, остановка 4 сут. Капитальный: ресурс 100%, остановка 20 сут. Износ выше 75% — аварийные остановки.</p>`)}
         <div class="gwells">${NPZ_LIST().map(u => { const B = D.BUILD[u], f = E.facs(s, u)[0], req = B.req && !has(B.req);
           const cat = u === 'npz_ref' ? s.cat.rf : u === 'npz_hdo' ? s.cat.hdo : null;
           return `<div class="gwell ${f ? 'work' : ''}"><div class="w-h"><b>${G.icon('npz')} ${B.name}</b>${f ? facPill(f) : pill('нет', '')}</div>
@@ -1396,7 +1569,10 @@
             <div class="btnrow">${f ? (cat != null ? btn(`Регенерация · ${money((u === 'npz_ref' ? 30e6 : 25e6) * idx())}`, 'npzRegen', f.id, 'small', f.regen > 0 || f.status !== 'ok') : '') + fixBtns(f) : btn(`Построить · ${money(B.cost * idx())}`, 'tender', u, 'small primary', req)}${req ? `<small>нужен ${D.BUILD[B.req].name}</small>` : ''}</div></div>`; }).join('')}</div>`;
     }
     if (sb === 'prod') return vNpzProd();
-    return `${card('Технологическая схема НПЗ (онлайн)', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap big">${npzScheme()}</div>
+    if (sb === 'contracts') return vNpzContracts();
+    if (sb === 'safety') return vSafety();
+    if (sb === 'staff' || sb === 'energy' || sb === 'repair' || sb === 'stock') return dsUnit('npz', sb);
+    return `${npzPult()}${E.facs(s, 'npz').length ? shiftBoard('npz', 'Смены НПЗ: работа 24 часа') : ''}${card('Технологическая схема НПЗ (онлайн)', `<div class="swipe-hint">← листайте схему →</div><div class="scheme-wrap big">${npzScheme()}</div>
       <p class="hint">Серые блоки — не построены. Жёлтые — режим вне нормы.</p>`)}
       ${npzGauges(R)}
       <div class="kpis">
@@ -1409,6 +1585,60 @@
   const avgH = types => { const fs = s.fac.filter(f => types.includes(f.type)); return fs.length ? fs.reduce((a, f) => a + f.health, 0) / fs.length : 100; };
   const facPill = f => f.regen > 0 ? pill('регенерация ' + f.regen + ' сут', 'warn') : f.status === 'service' ? pill(`${f.fixKind === 'kr' ? 'капремонт' : 'ремонт'} ${f.serviceDays} сут`, 'warn') : f.status === 'fail' ? pill('авария', 'bad') : f.status === 'ok' ? pill('в работе', 'good') : pill('стройка', '');
   const fixBtns = f => f.status === 'service' || f.regen > 0 ? '' : btn(`Текущий · ${money(E.fixCost(s, f, 'tr'))}`, 'fixfac', f.id + ':tr', 'small' + (f.health < 50 || f.status === 'fail' ? ' primary' : '')) + btn(`Капремонт · ${money(E.fixCost(s, f, 'kr'))}`, 'fixfac', f.id + ':kr', 'small');
+  /* ===== Договоры на нефтепродукты: СНГ, госконтракты, внутренние покупатели ===== */
+  const FLAG = {
+    KZ: '<rect width="30" height="20" fill="#00AFCA"/><rect x="1.5" width="1.6" height="20" fill="#FEC50C" opacity=".9"/><circle cx="16" cy="9" r="3.6" fill="#FEC50C"/><path d="M11 13.5q5 2.5 10 0" stroke="#FEC50C" stroke-width="1.1" fill="none"/>',
+    RU: '<rect width="30" height="20" fill="#fff"/><rect y="6.67" width="30" height="6.67" fill="#0039A6"/><rect y="13.33" width="30" height="6.67" fill="#D52B1E"/>',
+    UZ: '<rect width="30" height="20" fill="#fff"/><rect width="30" height="6.4" fill="#0099B5"/><rect y="13.6" width="30" height="6.4" fill="#1EB53A"/><rect y="6.4" width="30" height=".6" fill="#CE1126"/><rect y="13" width="30" height=".6" fill="#CE1126"/><circle cx="5" cy="3.2" r="2.1" fill="#fff"/><circle cx="5.9" cy="3.2" r="1.8" fill="#0099B5"/>',
+    KG: '<rect width="30" height="20" fill="#E8112D"/><circle cx="15" cy="10" r="5" fill="#FFEF00"/><circle cx="15" cy="10" r="2.6" fill="#E8112D"/><path d="M12.6 10h4.8M15 7.6v4.8" stroke="#FFEF00" stroke-width=".7"/>',
+    TJ: '<rect width="30" height="20" fill="#fff"/><rect width="30" height="5.7" fill="#CC0000"/><rect y="14.3" width="30" height="5.7" fill="#006600"/><path d="M12.5 11.3h5l-.6-2-1.2 1-0.7-1.6-.7 1.6-1.2-1z" fill="#F8C300"/>',
+    AZ: '<rect width="30" height="20" fill="#00B5E2"/><rect y="6.67" width="30" height="6.67" fill="#EF3340"/><rect y="13.33" width="30" height="6.67" fill="#509E2F"/><circle cx="14.2" cy="10" r="2.3" fill="#fff"/><circle cx="14.9" cy="10" r="1.9" fill="#EF3340"/><circle cx="17.3" cy="10" r=".9" fill="#fff"/>',
+    AM: '<rect width="30" height="20" fill="#D90012"/><rect y="6.67" width="30" height="6.67" fill="#0033A0"/><rect y="13.33" width="30" height="6.67" fill="#F2A800"/>',
+    BY: '<rect width="30" height="20" fill="#C8313E"/><rect y="13.33" width="30" height="6.67" fill="#4AA657"/><rect width="4" height="20" fill="#fff"/><path d="M2 1l1.3 2L2 5 .7 3zM2 7l1.3 2L2 11 .7 9zM2 13l1.3 2L2 17 .7 15z" fill="#C8313E"/>',
+    MD: '<rect width="30" height="20" fill="#FFD200"/><rect width="10" height="20" fill="#0046AE"/><rect x="20" width="10" height="20" fill="#CC092F"/><path d="M13.3 8h3.4v3.2q0 1.6-1.7 2.2-1.7-.6-1.7-2.2z" fill="#B07E3A"/>'
+  };
+  const flag = cc => `<svg class="flag" viewBox="0 0 30 20" width="27" height="18" aria-label="${esc((D.PC_COUNTRIES[cc] || {}).name || '')}">${FLAG[cc] || ''}<rect width="30" height="20" fill="none" stroke="#0006" stroke-width=".8"/></svg>`;
+  const PCN = { ai: 'АИ-92', a95: 'АИ-95', dt: 'ДТ', mz: 'Мазут' }, PCC = { ai: '#e5a50a', a95: '#e66100', dt: '#3584e4', mz: '#6b4f3a' };
+  function vNpzContracts() {
+    if (!E.facs(s, 'npz').length) return card('Договоры на нефтепродукты', '<p class="hint">Постройте НПЗ — появятся покупатели бензина, дизеля и мазута: внутренние, из стран СНГ и госконтракты.</p>');
+    const P = s.pc || { offers: [], list: [] }, act = P.list.filter(c => c.status === 'active'), done = P.list.filter(c => c.status !== 'active').slice(-6).reverse();
+    const pd = E.parts(s.day), dim = new Date(Date.UTC(pd.y, pd.m, 0)).getUTCDate(), d = dsT(), feed = Math.max(1, s.ds.feed) * 30, Y = E.npzYield(s);
+    const outM = { ai: (d.out ? d.out.ai : 0) * 30, a95: (d.out ? d.out.a95 : 0) * 30, dt: (d.out ? d.out.dt : 0) * 30, mz: (d.out ? d.out.mz : 0) * 30 };
+    const contr = k => sum(act.filter(c => c.prod === k), c => c.monthly);
+    const spot = k => E.spotNet(s, k);
+    const kindPill = k => `<span class="pck ${k}">${E.PC_KIND[k]}</span>`;
+    const qLamp = c => `<i class="ol ${E.pcOk(s, c) ? 'g' : 'r'}"></i>`;
+    const cRow = c => { const plan = c.monthly * pd.d / dim, f = c.shippedMonth, net = E.pcNet(s, c), sp = spot(c.prod), C = D.PC_COUNTRIES[c.cc];
+      return `<div class="pcc"><div class="pc-h">${flag(c.cc)}<div class="pc-t"><b>${esc(c.buyer)}</b><small>${esc(C.name)} · №${c.id} · ${kindPill(c.kind)}</small></div><span class="pcp" style="--c:${PCC[c.prod]}">${PCN[c.prod]}</span></div>
+        <div class="pc-bar"><i style="width:${Math.min(100, f / c.monthly * 100)}%"></i><em style="left:${Math.min(100, plan / c.monthly * 100)}%"></em></div>
+        <div class="pc-n"><span>отгружено <b class="${f >= plan * 0.95 ? 'tgood' : f >= plan * 0.7 ? 'twarn' : 'tbad'}">${num(f)}</b> из ${num(c.monthly)} т</span><span>осталось ${c.monthsLeft} мес</span></div>
+        <div class="pc-g"><div><small>Цена</small><b>${num(E.pcPrice(s, c))} ₸/т</b><small>рынок ${c.prem >= 0 ? '+' : ''}${num(c.prem, 1)}%${E.qualF(s, c.prod) < 1 ? ' · скидка за качество' : ''}</small></div>
+          <div><small>Нетбэк</small><b class="${net >= sp ? 'tgood' : 'twarn'}">${num(net)} ₸/т</b><small>${net >= sp ? '+' : ''}${num(net - sp)} к спот-опту</small></div>
+          <div><small>Качество</small><b>${qLamp(c)} ${E.pcOk(s, c) ? 'норма' : 'брак'}</b><small>${esc(E.pcReqText(c))}</small></div></div>
+        ${c.why ? `<p class="pc-w">⚠ ${esc(c.why)}</p>` : ''}
+        <div class="btnrow">${btn('Расторгнуть', 'pcCancel', c.id, 'small ghost')}</div></div>`; };
+    const oRow = o => { const net = E.pcNet(s, o), sp = spot(o.prod), ok = E.pcOk(s, o), C = D.PC_COUNTRIES[o.cc], fr = E.pcFreight(s, o), du = E.pcDuty(s, o);
+      return `<div class="pcc offer"><div class="pc-h">${flag(o.cc)}<div class="pc-t"><b>${esc(o.buyer)}</b><small>${esc(C.name)} · ${kindPill(o.kind)}</small></div><span class="pcp" style="--c:${PCC[o.prod]}">${PCN[o.prod]}</span></div>
+        <div class="pc-g"><div><small>Объём</small><b>${num(o.monthly)} т/мес</b><small>${o.months} мес · всего ${num(o.monthly * o.months)} т</small></div>
+          <div><small>Нетбэк</small><b class="${net >= sp ? 'tgood' : 'twarn'}">${num(net)} ₸/т</b><small>${net >= sp ? '+' : ''}${num(net - sp)} к спот-опту</small></div>
+          <div><small>Качество</small><b>${ok ? '<i class="ol g"></i> проходит' : '<i class="ol r"></i> нет'}</b><small>${esc(E.pcReqText(o))}</small></div></div>
+        <p class="pc-f">Цена: рынок${E.qualF(s, o.prod) < 1 ? ` ×${num(E.qualF(s, o.prod), 2)} (качество)` : ''} ${o.prem >= 0 ? '+' : ''}${num(o.prem, 1)}% = ${num(E.pcPrice(s, o))} ₸/т${fr ? ` − ж/д ${num(fr)}` : ' · самовывоз'}${du ? ` − пошлина ${num(du)}` : ''} · штраф ${Math.round(o.penalty * 100)}% за недопоставку${o.kind === 'gov' ? ' · банковская гарантия 1% при подписании' : ''}</p>
+        <div class="btnrow">${btn(ok ? 'Заключить договор' : 'Не проходит по качеству', 'pcAccept', o.id, 'small primary', !ok)}</div></div>`; };
+    const bal = ['ai', 'a95', 'dt', 'mz'].filter(k => outM[k] > 1 || contr(k) > 0);
+    const rev = sum(act, c => c.shippedMonth * E.pcNet(s, c));
+    return `<div class="kpis">
+      ${kpiTile('Действующих договоров', `${act.length}`, `СНГ ${act.filter(c => c.cc !== 'KZ').length} · внутр. ${act.filter(c => c.cc === 'KZ').length}`, '')}
+      ${kpiTile('Отгружено за месяц', `${num(sum(act, c => c.shippedMonth))} т`, `план на сегодня ${num(sum(act, c => c.monthly * pd.d / dim))} т`, sum(act, c => c.shippedMonth) >= sum(act, c => c.monthly * pd.d / dim) * 0.95 ? 'good' : 'warn')}
+      ${kpiTile('Выручка (нетбэк)', money(rev), 'по договорам в этом месяце', '')}
+      ${kpiTile('Штрафы', money(sum(P.list, c => c.fines || 0)), 'за недопоставку, всего', sum(P.list, c => c.fines || 0) > 0 ? 'bad' : 'good')}
+    </div>
+    ${card('Баланс: выпуск и обязательства', bal.length ? `<div class="pcbal">${bal.map(k => { const o = outM[k], c = contr(k), r = o > 0 ? c / o : (c > 0 ? 9 : 0);
+      return `<div class="pcb"><span class="pcp" style="--c:${PCC[k]}">${PCN[k]}</span>${segBar(Math.min(1, r), r > 1 ? 'bad' : r > 0.85 ? 'warn' : 'good')}<small>${num(c)} из ${num(o)} т/мес${r > 1 ? ' — <b class="tbad">перебор</b>' : ''}</small></div>`; }).join('')}</div>
+      <p class="hint">Договоры отгружаются раньше спотового опта и запаса для АЗС. Законтрактуйте не больше 85% выпуска — при остановке установки будут штрафы.</p>` : '<p class="hint">НПЗ пока не выпускает продуктов.</p>')}
+    ${card('Действующие договоры', act.length ? act.map(cRow).join('') : '<div class="empty">Нет договоров — выберите покупателя ниже</div>')}
+    ${card('Предложения покупателей', (P.offers.length ? P.offers.map(oRow).join('') : '<div class="empty">Новые предложения — в начале месяца</div>') + `<p class="hint">Внутренние покупатели — самовывоз, цена около рынка. Экспорт в СНГ — премия к рынку, но ж/д тариф до границы покупателя и экспортная пошлина (с 2008 г.). Госконтракты — большие объёмы и сроки, строгие штрафы, срыв снижает доверие.</p>`)}
+    ${done.length ? card('Завершённые', done.map(c => `<div class="prow"><span>${flag(c.cc)} №${c.id} ${esc(c.buyer)} · ${PCN[c.prod]}</span><b class="${c.status === 'done' ? 'tgood' : 'tbad'}">${c.status === 'done' ? 'исполнен' : 'расторгнут'}</b></div>`).join('')) : ''}`;
+  }
   function vNpzProd() {
     const d = dsT(), has = E.facs(s, 'npz').length > 0;
       const h = s.history.slice(-24), L = h.map(x => ymRu(x.m));
@@ -1491,8 +1721,8 @@
           ${row('Акциз', -(F.exc || 0), P && -P.exc)}
           ${row('Магазин, кафе, мойка (маржа)', F.shop || 0, P && P.shop)}
           ${row('Валовая маржа', gross, P && (P.rev - P.cogs - P.exc + P.shop), 'hl')}
-          ${row('Персонал', -(F.staff || 0), null)}
-          ${row('Аренда, охрана, коммунальные', -(F.opex || 0), P && -P.opex)}
+          ${row('Персонал сети (с налогами)', -(F.staff || 0), null)}
+          ${row('Содержание: аренда, электроэнергия, охрана', -(F.opex || 0), P && -P.opex)}
           ${row('Доставка бензовозами', -(F.deliv || 0), P && -P.deliv)}
           ${row('EBITDA', ebitda, P && P.ebitda, 'hl')}
         </tbody></table></div><p class="hint">Себестоимость — по оптовой цене (своё топливо тоже).</p>`)}
@@ -1521,6 +1751,7 @@
         ${card('Продажи АЗС по месяцам, т', G.bars({ labels: L, series: [{ name: 'Продано', color: C.aqua, values: h.map(x => (x.ds && x.ds.azs) || 0) }], height: 200, unit: 'т', empty: 'Появится после первого месяца' }))}
       </div>`;
     }
+    if (sb === 'staff' || sb === 'energy' || sb === 'repair' || sb === 'stock') return dsUnit('retail', sb);
     if (sb === 'st') {
       if (!all.length) return card('Станции', '<p class="hint">Пока нет АЗС. Постройте на вкладке «Сеть».</p>');
       return `<div class="gwells">${all.map(f => { const st = f.st || {}, T = E.AZS_TRAF[f.loc] || E.AZS_TRAF.road, mx = E.azsMix(f), m = f.fin && f.fin.m;
@@ -1537,7 +1768,7 @@
           <div class="btnrow">${!f.lpg ? btn('Газовая колонка · ' + money(18e6 * idx()), 'azsUp', f.id + ':lpg', 'small') : ''}${f.trk < 8 ? btn('+2 колонки · ' + money(10e6 * idx()), 'azsUp', f.id + ':trk', 'small') : ''}${!f.cafe ? btn('Кафе · ' + money(20e6 * idx()), 'azsUp', f.id + ':cafe', 'small') : ''}${!f.wash ? btn('Мойка · ' + money(30e6 * idx()), 'azsUp', f.id + ':wash', 'small') : ''}${f.tkCap.dt < 80 ? btn('Резервуары ×2 · ' + money(15e6 * idx()), 'azsUp', f.id + ':tank', 'small') : ''}</div></div>`; }).join('')}</div>`;
     }
     const F = s.azsFin || {}, eM = F.days ? azsE(F) : 0;
-    return `<div class="kpis">
+    return `${all.length ? shiftBoard('retail', 'Смены АЗС: работа 24 часа') : ''}<div class="kpis">
         ${kpiTile('Сеть АЗС', all.length, `${az.length} работают · ${num(d.cars)} машин/сут`, all.length > az.length ? 'warn' : '')}
         ${kpiTile('Продано за сутки', num(litres) + ' л', RK.map(k => `${RN[k].replace('АИ-', '')}: ${num(d.azs[k] / DENS[k] * 1000)}`).join(' · '), litres > 0 ? 'good' : '')}
         ${kpiTile('Выручка за сутки', money(rev + d.shopRev), 'топливо + магазин', rev > 0 ? 'good' : '')}
@@ -1552,7 +1783,7 @@
       <div class="grid2">
         ${card('Бензовозы', `<p class="hint" style="margin-top:0">Свой бензовоз — 44 т/сут за ${money(20000 * idx())} в день. Наём — ${money(2500 * idx())} за тонну.</p>
           <div class="btnrow">${btn('Купить · ' + money(25e6 * idx()), 'trucks', s.ds.trucks + 1)}${s.ds.trucks > 0 ? btn('Продать один', 'trucks', s.ds.trucks - 1) : ''}</div>
-          <label class="check"><input type="checkbox" data-change="autofix" ${s.ds.autoFix ? 'checked' : ''}> Авторемонт АЗС и НПЗ при износе выше 60%</label>`)}
+          <p>Авторемонт АЗС: <b class="${E.dsCfg(s).fix.azs.on ? 'tgood' : 'twarn'}">${E.dsCfg(s).fix.azs.on ? 'включён' : 'выключен'}</b> ${btn('Настроить', 'goRepair', 'azs', 'small')}</p>`)}
         ${card('Построить АЗС', `${Object.entries(D.AZS_LOC).map(([k, L]) => { const T = E.AZS_TRAF[k]; return `<div class="prow"><span>${L.name[0].toUpperCase() + L.name.slice(1)} — ~${T.cars} машин/сут, налив ${T.l} л, дизель ${pct(T.dt)}</span><div class="btnrow">${btn(money(D.BUILD.azs.cost * L.cost * idx()), 'tender', 'azs:' + k, 'small')}</div></div>`; }).join('')}`)}
       </div>`;
   }
@@ -1646,6 +1877,50 @@
     </svg>`;
   }
   /* ---------- СУГ: ёмкости, поставки на АЗС, опт ---------- */
+  // мнемосхема СУГ: источники → задвижки → ёмкости → задвижки → потребители
+  function lpgMnemo(L, d, cap) {
+    const hasG = E.facs(s, 'gfu').length > 0, hasN = E.facs(s, 'npz').length > 0;
+    const oG = L.inGfu !== false, oN = L.inNpz !== false, oA = L.toAzs !== false, oS = !!L.sell;
+    const dur = f => Math.max(0.6, Math.min(5, 5 / ((f || 0) / 2 + 0.25))).toFixed(2);
+    const pipe = (dd, flow, col) => `<path d="${dd}" class="pipe" style="stroke-width:6"/><path d="${dd}" class="flow ${flow > 0.01 ? 'on' : ''}" stroke="${col}" style="stroke-width:3;animation-duration:${dur(flow)}s"/>`;
+    const box = (x, y, w, h, t1, t2, st) => `<g class="node ${st}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="8"/><text x="${x + w / 2}" y="${y + 20}" class="nt">${t1}</text><text x="${x + w / 2}" y="${y + 37}" class="ns">${t2}</text></g>`;
+    const tl = (x, y, txt, cls = 'pl') => `<text x="${x}" y="${y}" class="${cls}" text-anchor="middle">${txt}</text>`;
+    const lv = cap ? Math.min(1, L.st / cap) : 0, inT = (d.gfu || 0) + (d.npz || 0), outT = (d.toAzs || 0) + (d.sold || 0) + (d.fuelNet || 0), net = inT - outT;
+    const tx = 158, ty = 90, tw = 144, th = 66, ly = ty + th * (1 - lv);
+    const tank = `<g><clipPath id="lpgmc"><rect x="${tx}" y="${ty}" width="${tw}" height="${th}" rx="${th * 0.36}"/></clipPath>
+      ${[0.24, 0.76].map(p => `<path d="M${tx + tw * p - 13} ${ty + th + 14} L${tx + tw * p - 8} ${ty + th - 6} L${tx + tw * p + 8} ${ty + th - 6} L${tx + tw * p + 13} ${ty + th + 14}Z" fill="#5b636b" stroke="#2a2f34"/>`).join('')}<rect x="${tx - 4}" y="${ty + th + 14}" width="${tw + 8}" height="4" fill="#3a4148"/>
+      <rect x="${tx + tw / 2 - 8}" y="${ty - 7}" width="16" height="8" fill="#8d969e" stroke="#2a2f34"/>
+      <rect x="${tx}" y="${ty}" width="${tw}" height="${th}" rx="${th * 0.36}" fill="#e6e9ec" stroke="#5b636b"/>
+      <g clip-path="url(#lpgmc)"><rect x="${tx}" y="${ly.toFixed(1)}" width="${tw}" height="${(ty + th - ly + 1).toFixed(1)}" fill="#2f6db5" opacity=".55"/><rect x="${tx}" y="${ty + th * 0.42}" width="${tw}" height="${th * 0.16}" fill="#c62828"/></g>
+      <rect x="${tx}" y="${ty}" width="${tw}" height="${th}" rx="${th * 0.36}" fill="none" stroke="#5b636b" stroke-width="1.2"/>${[th * 0.36, tw - th * 0.36].map(x => `<line x1="${tx + x}" y1="${ty + 1}" x2="${tx + x}" y2="${ty + th - 1}" stroke="#9aa3ab" stroke-width=".8"/>`).join('')}
+      <g transform="translate(${tx + tw - 34} ${ty + 10})"><rect width="9" height="${th - 20}" rx="2" fill="#1a1d20" stroke="#2a2f34"/><rect x="1.2" y="${((th - 20) * (1 - lv)).toFixed(1)}" width="6.6" height="${Math.max(0, (th - 20) * lv - 1).toFixed(1)}" fill="${lv > 0.85 ? '#e53935' : lv < 0.1 ? '#ffb300' : '#43a047'}"/></g>
+      <text x="${tx + tw / 2 - 8}" y="${ty + th / 2 + 22}" text-anchor="middle" font-size="11" font-weight="900" fill="#1d2126">${pct(lv)}</text>
+      <text x="${tx + tw / 2 - 8}" y="${ty + th / 2 + 5}" text-anchor="middle" font-size="13" font-weight="900" fill="#fff" letter-spacing="2">ПРОПАН</text>
+      ${tl(tx + tw / 2, ty - 12, `${num(L.st, 1)} / ${num(cap)} т · ${pct(lv)}`, 'pl strong')}</g>`;
+    const dd = x => x > 365 ? 'больше года' : num(x) + ' сут';
+    const fill = net > 0.05 && cap ? `копится +${num(net, 1)} т/сут · полны через ${dd(Math.max(0, (cap - L.st) / net))}` : net < -0.05 ? `убывает −${num(-net, 1)} т/сут · запаса на ${dd(L.st / -net)}` : 'приход = расход';
+    return `<svg class="scheme lpgm" viewBox="0 0 460 250" role="img" aria-label="Мнемосхема СУГ">
+      ${box(4, 26, 100, 52, 'ГФУ', hasG ? `${num(d.gfu || 0, 2)} т/сут` : 'не построена', !hasG ? 'off' : oG ? '' : 'n-warn')}
+      ${box(4, 168, 100, 52, 'НПЗ', hasN ? (oN ? `${num(d.npz || 0, 2)} т/сут` : `→ топл. сеть ${num(d.npzFuel || 0, 1)}`) : 'нет НПЗ', !hasN ? 'off' : oN ? '' : 'n-warn')}
+      ${pipe('M104 52 H140 V108 H158', oG ? d.gfu : 0, '#7fb4e6')}${hasG ? valveSvg(128, 52, 'gfu', oG, 'Задвижка с ГФУ', 'lpgValve', 0.75) : ''}
+      ${pipe('M104 194 H140 V138 H158', oN ? d.npz : 0, '#7fb4e6')}${hasN ? valveSvg(128, 194, 'npz', oN, 'Задвижка с НПЗ', 'lpgValve', 0.75) : ''}
+      ${tank}${tl(tx + tw / 2, 236, fill, net > 0.01 && cap && (cap - L.st) / net < 7 ? 'pl warn' : 'pl')}
+      ${pipe('M302 108 H318 V52 H356', oA ? d.toAzs : 0, '#7fb4e6')}${valveSvg(333, 52, 'azs', oA, 'Задвижка на АЗС', 'lpgValve', 0.75)}
+      ${pipe('M302 138 H318 V194 H356', oS ? d.sold : 0, '#7fb4e6')}${valveSvg(333, 194, 'sell', oS, 'Задвижка в опт', 'lpgValve', 0.75)}
+      ${box(356, 26, 100, 52, 'АЗС', `${num(d.toAzs || 0, 2)} т газовоз.`, oA ? '' : 'n-warn')}
+      ${box(356, 168, 100, 52, 'Опт (ж/д)', `${num(d.sold || 0, 2)} т/сут`, oS ? '' : 'n-warn')}
+      ${d.gfuPot - d.gfu > 0.05 ? tl(tx + tw / 2, 214, `ГФУ разгружена: −${num(d.gfuPot - d.gfu, 1)} т/сут — нет места`, 'pl warn') : d.fuelNet > 0 ? tl(tx + tw / 2, 214, `газ НПЗ в топл. сеть: ${num(d.fuelNet, 1)} т — нет места`, 'pl warn') : !cap ? tl(tx + tw / 2, 214, 'ёмкостей нет — постройте', 'pl bad') : ''}
+    </svg>`;
+  }
+  // индикаторы накопления СУГ: уровень, приход / расход, баланс, срок до заполнения
+  function lpgInd(L, d, cap) {
+    const lv = cap ? L.st / cap : 0, inT = (d.gfu || 0) + (d.npz || 0), outT = (d.toAzs || 0) + (d.sold || 0) + (d.fuelNet || 0) + (d.npzFuel || 0), net = inT - outT;
+    const days = net > 0.05 && cap ? (cap - L.st) / net : net < -0.05 ? L.st / -net : null;
+    const c = lv > 0.85 ? 'bad' : lv > 0.6 ? 'warn' : 'good';
+    return `<div class="lpgind"><div class="lpgind-l"><span>Уровень</span><b>${pct(lv)}</b>${segBar(lv, c)}</div>
+      <div class="kv3"><div><span>Приход</span><b class="tgood">+${num(inT, 2)} т</b></div><div><span>Расход</span><b>−${num(outT, 2)} т</b></div><div><span>Баланс</span><b class="${net > 0.05 ? 'twarn' : net < -0.05 ? '' : 'tgood'}">${net >= 0 ? '+' : '−'}${num(Math.abs(net), 2)} т/сут</b></div></div>
+      <small>${days == null ? 'приход равен расходу — уровень стоит' : net > 0 ? `ёмкости заполнятся через ${days > 365 ? 'больше года' : num(days) + ' сут'}` : `запаса хватит на ${days > 365 ? 'больше года' : num(days) + ' сут'}`} · свободно ${num(Math.max(0, cap - L.st), 1)} т</small></div>`;
+  }
   function vLpg() {
     const L = s.lpg || { st: 0, sell: true, res: 5, toAzs: true, hist: [] }, d = (s.today && s.today.lpg) || {}, cap = E.lpgCap(s), i = idx();
     const st = E.facs(s, 'azs'), withG = st.filter(f => f.lpg), g = gasT();
@@ -1657,28 +1932,31 @@
       ${kpiTile('На АЗС', num((d.azsL || 0)) + ' л', `продано автогаза · ${money(d.azsRev || 0)}`, d.azsL > 0 ? 'good' : '')}
       ${kpiTile('В опт', num(d.sold || 0, 1) + ' т', d.sold ? money(d.soldRev) : L.sell ? 'сверх резерва' : 'отгрузка закрыта', d.sold > 0 ? 'good' : '')}
     </div>`;
-    const tank = G.lpgTank({ id: 'main', level: cap ? L.st / cap : 0, text: `${num(L.st, 1)} т из ${num(cap)} т`, sub: d.lost > 0 ? `переполнение: ${num(d.lost, 1)} т на факел` : 'парк ёмкостей СУГ' });
+    const tank = G.lpgTank({ id: 'main', level: cap ? L.st / cap : 0, text: `${num(L.st, 1)} т из ${num(cap)} т`, sub: !cap ? 'ёмкостей нет — постройте подземные ёмкости' : d.gfuPot - d.gfu > 0.05 ? 'ёмкости полны — ГФУ разгружена' : 'парк ёмкостей СУГ' });
     const flows = `<div class="tscroll"><table class="tbl"><tbody>
-      <tr><td>ГФУ: переработано ПНГ</td><td>${num((g.gfuIn || 0) / 1000, 1)} тыс. м³</td></tr>
-      <tr><td>Получено СУГ с ГФУ</td><td>${num(d.gfu || 0, 2)} т</td></tr>
-      <tr><td>Получено СУГ с НПЗ (каткрекинг)</td><td>${num(d.npz || 0, 2)} т</td></tr>
-      <tr><td>Вывезено газовозами на АЗС</td><td>${num(d.toAzs || 0, 2)} т${d.bought ? ` + покупной ${num(d.bought, 2)} т` : ''}</td></tr>
-      <tr><td>Отгружено в опт</td><td>${num(d.sold || 0, 2)} т</td></tr>
-      ${d.lost ? `<tr><td class="tbad">Сожжено на факеле (переполнение)</td><td class="tbad">${num(d.lost, 2)} т</td></tr>` : ''}
+      <tr><td>ГФУ: ПНГ</td><td>${num((g.gfuIn || 0) / 1000, 1)} тыс. м³</td></tr>
+      <tr><td>СУГ с ГФУ</td><td>${num(d.gfu || 0, 2)} т</td></tr>
+      ${d.gfuPot - d.gfu > 0.05 ? `<tr><td class="twarn">ГФУ: нет места</td><td class="twarn">−${num(d.gfuPot - d.gfu, 2)} т</td></tr>` : ''}
+      <tr><td>СУГ с НПЗ (АТ / крекинг)</td><td>${num(dsT().calc ? dsT().calc.lpgAT || 0 : 0, 2)} / ${num(Math.max(0, (d.npz || 0) - (dsT().calc ? dsT().calc.lpgAT || 0 : 0)), 2)} т</td></tr>
+      <tr><td>На АЗС газовозами</td><td>${num(d.toAzs || 0, 2)} т${d.bought ? ` + покупной ${num(d.bought, 2)} т` : ''}</td></tr>
+      <tr><td>В опт</td><td>${num(d.sold || 0, 2)} т</td></tr>
+      ${d.fuelNet ? `<tr><td class="twarn">НПЗ → топл. сеть</td><td class="twarn">${num(d.fuelNet, 2)} т</td></tr>` : ''}
     </tbody></table></div>`;
     const ctrl = `<div class="vrow">${valveBtn(L.toAzs !== false, 'lpgValve', 'azs', 'lpgazs', 'На АЗС')}<small>Газовозы вывозят СУГ на станции с газовой колонкой, когда газа в резервуаре станции меньше половины. Доставка ${num(1500 * i)} ₸/т.</small></div>
-      <div class="vrow">${valveBtn(L.sell, 'lpgValve', 'sell', 'lpgsell', 'В опт')}<small>Всё сверх резерва для АЗС уходит в ж/д цистерны по оптовой цене. Закрыто — СУГ копится в ёмкостях, при переполнении сжигается на факеле.</small></div>
+      <div class="vrow">${valveBtn(L.sell, 'lpgValve', 'sell', 'lpgsell', 'В опт')}<small>Всё сверх резерва для АЗС уходит в ж/д цистерны по оптовой цене. Закрыто — СУГ копится в ёмкостях; когда они полны, ГФУ разгружается, а газ НПЗ идёт в топливную сеть завода вместо мазута.</small></div>
       <div class="slider"><label>Резерв СУГ для АЗС: <b>${L.res} сут</b></label><input type="range" min="0" max="30" step="1" value="${L.res}" data-change="lpgRes"></div>
       <div class="kv3"><div><span>Опт</span><b>${money(E.lpgWholesale(s))}/т</b></div><div><span>Колонка</span><b>${num(E.lpgRetailL(s), 1)} ₸/л</b></div><div><span>Спрос АЗС</span><b>${num(d.dem || 0, 2)} т/сут</b></div></div>`;
     const stations = st.length ? `<div class="gwells">${st.map(f => { const lv = f.lpg ? (f.tk.lpg || 0) / (f.tkCap.lpg || 1) : 0, ls = f.lpgSt || {};
       return `<div class="gwell ${f.lpg ? (ls.dry > 0.01 ? 'fail' : 'work') : ''}"><div class="w-h"><b>${esc(f.name)}</b>${f.lpg ? pill(ls.dry > 0.01 ? 'газа нет' : 'газ есть', ls.dry > 0.01 ? 'bad' : 'good') : pill('без газа', '')}</div>
         ${f.lpg ? `${G.lpgTank({ id: 'z' + f.id, level: lv, small: true, text: `${num(f.tk.lpg || 0, 1)} / ${num(f.tkCap.lpg)} т` })}<small>продано за сутки: ${num(ls.l || 0)} л · ${money(ls.rev || 0)}</small>` : `<small>Газовая колонка: ~${Math.round(14)}% машин ездят на газу. Резервуар СУГ 10 т.</small><div class="btnrow">${btn('Газовая колонка · ' + money(18e6 * i), 'azsUp', f.id + ':lpg', 'small')}</div>`}</div>`; }).join('')}</div>` : '<p class="hint">Своих АЗС нет — весь СУГ уходит в опт.</p>';
     const hist = (L.hist || []).slice(-12);
-    return `${kp}<div class="grid2">${card('Парк ёмкостей СУГ', tank + flows)}${card('Направление СУГ', ctrl)}</div>
+    return `${kp}${card('Мнемосхема СУГ: откуда приходит и куда уходит газ', `<div class="scheme-wrap">${lpgMnemo(L, d, cap)}</div><p class="hint">Нажмите на задвижку, чтобы открыть или закрыть линию. Закрыта ГФУ — газ идёт в газопровод без извлечения пропана; при полных ёмкостях и закрытом опте ГФУ разгружается сама. Закрыта линия НПЗ — СУГ сжигается в печах завода вместо мазута. Закрыты АЗС и опт — газ копится в ёмкостях.</p>`)}<div class="grid2">${card('Парк ёмкостей СУГ', tank + lpgInd(L, d, cap) + flows)}${card('Направление СУГ', ctrl)}</div>
       ${card('Газовые колонки АЗС', stations + `<p class="hint">Станции с колонкой продают автогаз (пропан-бутан). Нет своего газа — при включённой закупке на АЗС газ покупается по рынку +5%.</p>`)}
-      ${hist.length ? card('СУГ по месяцам', `<div class="tscroll"><table class="tbl"><thead><tr><th>Месяц</th><th>Получено, т</th><th>АЗС, т</th><th>Опт, т</th><th>Факел, т</th></tr></thead><tbody>${hist.slice().reverse().map(h => `<tr><td>${ymRu(h.m)}</td><td>${num(h.prod, 1)}</td><td>${num(h.azs, 1)}</td><td>${num(h.sold, 1)}</td><td class="${h.lost > 0 ? 'tbad' : ''}">${num(h.lost, 1)}</td></tr>`).join('')}</tbody></table></div>`) : ''}
-      ${card('Источники и хранение', `<p>${hasSrc ? '' : 'Пока нет источника СУГ. '}ГФУ извлекает пропан-бутан из попутного газа (≈0,28 кг с м³) и снижает сжигание на факеле. Каткрекинг НПЗ тоже даёт СУГ.</p>
-        <div class="btnrow">${btn('ГФУ · ' + money(D.BUILD.gfu.cost * i), 'tender', 'gfu', 'small')}${btn('Ёмкости СУГ +100 т · ' + money(D.BUILD.lpg_tank.cost * i), 'tender', 'lpg_tank', 'small')}</div>`)}`;
+      ${hist.length ? card('СУГ по месяцам', `<div class="tscroll"><table class="tbl"><thead><tr><th>Месяц</th><th>Получено, т</th><th>АЗС, т</th><th>Опт, т</th><th>В топл. сеть, т</th></tr></thead><tbody>${hist.slice().reverse().map(h => `<tr><td>${ymRu(h.m)}</td><td>${num(h.prod, 1)}</td><td>${num(h.azs, 1)}</td><td>${num(h.sold, 1)}</td><td class="${h.lost > 0 ? 'tbad' : ''}">${num(h.lost, 1)}</td></tr>`).join('')}</tbody></table></div>`) : ''}
+      ${card('Источники и хранение', `<p>${hasSrc ? '' : 'Пока нет источника СУГ. '}ГФУ стоит после МКС: из сжатого попутного газа извлекает пропан-бутан (≈0,28 кг с м³), сухой газ уходит в газопровод. Без МКС и ёмкостей ГФУ не построить. На НПЗ СУГ даёт ЭЛОУ-АТ (головка стабилизации ≈1,1% нефти) и каткрекинг.</p>
+        <div class="btnrow">${btn('Ёмкости СУГ +100 т · ' + money(D.BUILD.lpg_tank.cost * i), 'tender', 'lpg_tank', 'small')}${btn('ГФУ · ' + money(D.BUILD.gfu.cost * i), 'tender', 'gfu', 'small', !E.facs(s, 'gascomp').length || !E.facs(s, 'lpg_tank').length)}</div>
+        ${!E.facs(s, 'gascomp').length ? '<p class="hint">Для ГФУ сначала нужна МКС (вкладка «МКС и ПНГ»).</p>' : ''}`)}
+      ${E.lpgObjs(s).length ? card('Безопасность объектов СУГ', `<p>Экспертиза промбезопасности, утечки и пожары — в общем разделе.</p><div class="btnrow">${btn('Открыть «НПЗ → Безопасность»', 'goSafety', '', 'small')}</div>`) : ''}`;
   }
   function vGasTab() {
     const sb = sub();
@@ -2007,13 +2285,30 @@
     fleetSet: a => { doAct('veh', { op: a, on: !s.fleet[a] }); SND.play('valve'); render(); },
     vparts: a => { doAct('buy', { key: 'vparts', qty: Number(a) }, 'Заказ оформлен'); render(); },
     menu: a => { doAct('menu', { menu: a }, 'Меню изменено: ' + E.MENU[a].name); render(); },
-    valve: a => { doAct('np', { valve: a }); SND.play('valve'); render(); },
+    valve: a => { if (a === 'crude') { const op = s.np.run === 'off' || s.np.run === 'stop'; confirmBox(op ? 'Открыть задвижку сырья — пуск НПЗ?' : 'Закрыть задвижку сырья — останов НПЗ?', op ? `Выход на режим 3 суток · ${money(4e6 * idx())}` : 'Останов 1 сутки, износ установок −1,5%', () => { if (doAct('np', { valve: 'crude' })) npzRunSnd(op); render(); }); return; } doAct('np', { valve: a }); SND.play('valve'); render(); },
+    npzRun: a => confirmBox(a === 'start' ? 'Открыть задвижку сырья — пуск НПЗ?' : 'Закрыть задвижку сырья — останов НПЗ?', a === 'start' ? `Выход на режим 3 суток · ${money(4e6 * idx())}` : 'Останов 1 сутки, износ установок −1,5%', () => { if (doAct('np', { run: a })) npzRunSnd(a === 'start'); render(); }),
     fixfac: a => { const [id, kind] = String(a).split(':'); const f = s.fac.find(x => x.id === Number(id)); if (!f) return; confirmBox(`${kind === 'kr' ? 'Капитальный' : 'Текущий'} ремонт: ${f.name}?`, `${money(E.fixCost(s, f, kind))}, остановка на ${E.fixDays(f, kind)} сут.`, () => { doAct('fixfac', { id, kind }); render(); }); },
     npzRegen: a => confirmBox('Регенерация катализатора?', 'Установка остановится на 8 суток.', () => { doAct('regen', { id: a }); }),
     grp: a => { ui.grp = ui.grp || {}; ui.grp[a] = !ui.grp[a]; render(); },
     grpAll: a => { ui.grp = ui.grp || {}; const ks = String(a).split(','), on = !ks.every(k => ui.grp[k]); for (const k of ks) ui.grp[k] = on; render(); },
     worksOpen: () => { ui.worksOpen = !ui.worksOpen; render(); },
-    lpgValve: a => { doAct('lpgSet', { valve: a }); SND.play('valve'); render(); },
+    lpgExp: () => { if (doAct('lpgSet', { exp: true }, 'Освидетельствование проведено')) SND.play('stamp'); render(); },
+    goSafety: () => { go('npz:safety'); },
+    goFleet: () => { go('fleet:cars'); },
+    goStaffDs: a => { go(a + ':staff'); },
+    pcAccept: a => { const o = (s.pc.offers || []).find(x => x.id === Number(a)); if (!o) return; confirmBox(`Договор с ${o.buyer}?`, `${PCN[o.prod]} ${num(o.monthly)} т/мес на ${o.months} мес. Штраф за недопоставку ${Math.round(o.penalty * 100)}% стоимости.${o.kind === 'gov' ? ' Банковская гарантия: ' + money(o.monthly * o.months * E.pcPrice(s, o) * 0.01) + '.' : ''}`, () => { if (doAct('pcAccept', { id: o.id }, 'Договор заключён')) SND.play('stamp'); render(); }, 'Подписать'); },
+    pcCancel: a => { const c = s.pc.list.find(x => x.id === Number(a)); if (!c) return; confirmBox('Расторгнуть договор?', `Неустойка ${money(c.monthly * E.pcPrice(s, c) * (c.kind === 'gov' ? 0.2 : 0.1))}${c.kind === 'gov' ? ', доверие −3' : ', доверие −1'}.`, () => { doAct('pcCancel', { id: c.id }, 'Договор расторгнут'); render(); }, 'Расторгнуть'); },
+    goRepair: a => { go(a + ':repair'); },
+    goStock: a => { go(a + ':stock'); },
+    dsFixT: a => { if (doAct('ds', { fix: { g: a, on: !E.dsCfg(s).fix[a].on } })) SND.play('toggle'); render(); },
+    dsWhT: a => { if (doAct('ds', { wh: { g: a, auto: !E.dsCfg(s).wh[a].auto } })) SND.play('toggle'); render(); },
+    hireDept: a => { const need = E.staffNeed(s); let n = 0, cost = 0; const rl = D.ROLES.filter(r => r.dept === a), dd = r => need[r.key] - s.staff[r.key].n - s.hires.filter(h => h.role === r.key).reduce((x, h) => x + h.n, 0);
+      for (const r of rl) { const d = dd(r); if (d > 0) { n += d; cost += d * r.salary * idx() * 0.3; } }
+      if (!n) { flash('Штат укомплектован', 'good'); render(); return; }
+      confirmBox('Нанять весь штат?', `${n} чел. Стоимость подбора ${money(cost)}.`, () => { for (const r of rl) { const d = dd(r); if (d > 0) doAct('hire', { role: r.key, n: d }); } flash(`Подбор ${n} чел. начат`, 'good'); render(); }, 'Нанять'); },
+    guardT: a => { if (doAct('guard', { obj: a })) SND.play('toggle'); render(); },
+    goHse: () => { go('hse'); },
+    lpgValve: a => { if (doAct('lpgSet', { valve: a })) { SND.play('valve'); setTimeout(() => SND.play('hiss'), 600); } render(); },
     azsUp: a => { const [id, up] = String(a).split(':'); doAct('azsUp', { id, up }, 'Готово'); render(); },
     trucks: a => { doAct('ds', { trucks: Number(a) }, 'Парк бензовозов обновлён'); render(); },
     dsMode: a => { doAct('ds', { mode: a }); render(); },
@@ -2038,7 +2333,7 @@
     purpose: a => form('Перепрофилировать РВС', `Только пустой резервуар. Стоимость ${money(2e6 * idx())}.`, [{ name: 'p', label: 'Назначение', type: 'select', options: Object.entries(D.TANK_PURPOSE), value: s.fac.find(f => f.id === Number(a)).purpose }], v => doAct('tankPurpose', { id: a, purpose: v.p }) ? true : false),
     hire: a => { const r = D.ROLES.find(x => x.key === a); const need = Math.max(1, E.staffNeed(s)[a] - s.staff[a].n - s.hires.filter(h => h.role === a).reduce((x, h) => x + h.n, 0)); form('Подбор персонала', `${esc(r.name)}. Подбор: 30% месячного оклада за человека.`, [{ name: 'n', label: 'Количество', type: 'number', value: need, min: 1, hint: `Стоимость подбора: ${money(r.salary * idx() * 0.3)} за чел.` }], v => doAct('hire', { role: a, n: v.n }, 'Заявка на подбор размещена') ? true : false, 'Нанять'); },
     fire: a => form('Увольнение', 'Выходное пособие — месячный оклад. Мораль снизится.', [{ name: 'n', label: 'Количество', type: 'number', value: 1, min: 1 }], v => doAct('fire', { role: a, n: v.n }) ? true : false, 'Уволить'),
-    hireNeed: () => { const need = E.staffNeed(s); let n = 0, cost = 0; for (const r of D.ROLES) { const d = need[r.key] - s.staff[r.key].n - s.hires.filter(h => h.role === r.key).reduce((x, h) => x + h.n, 0); if (d > 0) { n += d; cost += d * r.salary * idx() * 0.3; } } if (!n) { flash('Штат укомплектован', 'good'); render(); return; } confirmBox('Нанять по потребности?', `Будет нанято ${n} чел. Стоимость подбора ${money(cost)}.`, () => { for (const r of D.ROLES) { const d = need[r.key] - s.staff[r.key].n - s.hires.filter(h => h.role === r.key).reduce((x, h) => x + h.n, 0); if (d > 0) doAct('hire', { role: r.key, n: d }); } flash(`Подбор ${n} чел. начат`, 'good'); }, 'Нанять'); },
+    hireNeed: () => { const need = E.staffNeed(s); let n = 0, cost = 0; for (const r of UP_ROLES()) { const d = need[r.key] - s.staff[r.key].n - s.hires.filter(h => h.role === r.key).reduce((x, h) => x + h.n, 0); if (d > 0) { n += d; cost += d * r.salary * idx() * 0.3; } } if (!n) { flash('Штат укомплектован', 'good'); render(); return; } confirmBox('Нанять по потребности?', `Будет нанято ${n} чел. Стоимость подбора ${money(cost)}.`, () => { for (const r of UP_ROLES()) { const d = need[r.key] - s.staff[r.key].n - s.hires.filter(h => h.role === r.key).reduce((x, h) => x + h.n, 0); if (d > 0) doAct('hire', { role: r.key, n: d }); } flash(`Подбор ${n} чел. начат`, 'good'); }, 'Нанять'); },
     salAll: a => { doAct('salaryAll', { pct: a }); render(); },
     buy: a => { const [key, q] = a.split(':'); doAct('buy', { key, qty: q }, 'Заказ размещён'); render(); },
     buyForm: a => { const m = D.MATERIALS.find(x => x.key === a); form('Закупка: ' + m.name, `Цена ${num(E.matPrice(s, a))} ₸ за ${m.unit}. Срок поставки ${E.leadTime(s)} дн.`, [{ name: 'q', label: `Количество, ${m.unit}`, type: 'number', value: m.min, min: 1 }], v => doAct('buy', { key: a, qty: v.q }, 'Заказ размещён') ? true : false, 'Купить'); },
@@ -2153,7 +2448,7 @@
     if (t.dataset.tab || t.dataset.sub || t.dataset.go) SND.play('tab');
     else if (!['adv', 'sndTest'].includes(t.dataset.act) && !ACT_SND[t.dataset.act]) SND.play('click');
     if (t.dataset.tab) { ui.tab = t.dataset.tab; setTimeout(saveUi, 0); ui.sheet = false; ui.page = 0; ui.resetScroll = true; render(); const p = document.querySelector('.page'); if (p) p.scrollTop = 0; window.scrollTo(0, 0); return; }
-    if (t.dataset.sub) { ui.sub[ui.tab] = t.dataset.sub; ui.page = 0; ui.resetScroll = true; render(); return; }
+    if (t.dataset.sub) { ui.sub[ui.tab] = t.dataset.sub; { const g = subGroup(); if (g) ui.subMem[ui.tab + ':' + g[0]] = t.dataset.sub; } ui.page = 0; ui.resetScroll = true; render(); return; }
     if (t.dataset.go) { go(t.dataset.go); return; }
     const h = handlers[t.dataset.act]; if (h) h(t.dataset.arg);
     if (ui.showHelpAfter && s && !s.pending && t.dataset.act === 'resolve') { ui.showHelpAfter = false; handlers.help(); }
@@ -2202,6 +2497,7 @@
     else if (k === 'lpgRes') { doAct('lpgSet', { res: el.value }); render(); }
     else if (k === 'yA' || k === 'yB') { ui[k] = Number(el.value); render(); }
     else if (k === 'autofix') { doAct('ds', { autoFix: el.checked }); render(); }
+    else if (k === 'dsset') { const g = el.dataset.g, kk = el.dataset.k, v = Number(el.value); if (kk === 'days') doAct('ds', { wh: { g, days: v } }); else doAct('ds', { fix: { g, [kk]: kk === 'max' ? v : 100 - v } }); render(); }
     else if (k === 'res') doAct('ds', { res: el.value });
     else if (k === 'mkp') doAct('ds', { mkp: el.value });
     else if (k === 'dsbuy') doAct('ds', { buy: el.checked });

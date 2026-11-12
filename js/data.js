@@ -21,6 +21,31 @@
     { key: 'drv',   name: 'Водитель спецтехники',         dept: 'trans', salary: 58000,  need: a => Math.max(2, Math.ceil(a.wells / 10), Math.ceil((a.vehicles || 0) * 0.8)) },
     { key: 'aup',   name: 'Экономист / бухгалтер (АУП)',  dept: 'aup',   salary: 100000, need: a => 2 + Math.floor(a.staff / 50) },
     { key: 'socop', name: 'Работник столовой и общежития', dept: 'soc', salary: 50000, need: a => a.canteen * 4 + a.dorm * 2 },
+    { key: 'sec', name: 'Сотрудник службы безопасности', dept: 'sec', salary: 68000, need: a => Math.max(3, Math.ceil(a.wells / 10)) },
+    // НПЗ: ИТР (руководство и специалисты)
+    { key: 'npzdir', name: 'Директор НПЗ', dept: 'npz', itr: true, salary: 380000, need: a => Math.min(1, a.npz) },
+    { key: 'npzce', name: 'Главный инженер НПЗ', dept: 'npz', itr: true, salary: 330000, need: a => Math.min(1, a.npz) },
+    { key: 'npztech', name: 'Главный технолог', dept: 'npz', itr: true, salary: 280000, need: a => Math.min(1, a.npz) },
+    { key: 'npzglmech', name: 'Главный механик', dept: 'npz', itr: true, salary: 260000, need: a => Math.min(1, a.npz) },
+    { key: 'npzglen', name: 'Главный энергетик', dept: 'npz', itr: true, salary: 260000, need: a => Math.min(1, a.npz) },
+    { key: 'npzmetr', name: 'Главный метролог (КИПиА)', dept: 'npz', itr: true, salary: 230000, need: a => Math.min(1, a.npz) },
+    { key: 'npzpto', name: 'Инженер ПТО НПЗ', dept: 'npz', itr: true, salary: 140000, need: a => a.npz > 0 ? 1 + Math.floor(a.npzUnits / 3) : 0 },
+    { key: 'npzhse', name: 'Инженер ПБ и ОТ НПЗ', dept: 'npz', itr: true, salary: 150000, need: a => a.npz > 0 ? 1 + Math.floor(a.npzUnits / 3) : 0 },
+    { key: 'npzlabhead', name: 'Начальник лаборатории (ОТК)', dept: 'npz', itr: true, salary: 170000, need: a => Math.min(1, a.npz) },
+    { key: 'npzshift', name: 'Начальник смены НПЗ', dept: 'npz', itr: true, salary: 160000, need: a => a.npz * 4 },
+    { key: 'npzemaster', name: 'Мастер энергетики НПЗ', dept: 'npz', itr: true, salary: 130000, need: a => a.npz > 0 ? 1 + Math.floor(a.npzUnits / 3) : 0 },
+    // НПЗ: рабочие
+    { key: 'npzlab', name: 'Лаборант химического анализа НПЗ', dept: 'npz', salary: 62000, need: a => a.npz * 4 },
+    { key: 'npzmech', name: 'Слесарь-ремонтник НПЗ', dept: 'npz', salary: 74000, need: a => a.npz * 3 + Math.ceil(a.npzUnits / 2) },
+    { key: 'npzelec', name: 'Электромонтёр НПЗ', dept: 'npz', salary: 80000, need: a => a.npz * 4 + a.npzUnits },
+    { key: 'npzkip', name: 'Слесарь КИПиА НПЗ', dept: 'npz', salary: 78000, need: a => a.npz * 4 + a.npzUnits },
+    // АЗС: ИТР
+    { key: 'azsnet', name: 'Начальник сети АЗС', dept: 'retail', itr: true, salary: 250000, need: a => Math.min(1, a.azs || 0) },
+    { key: 'azseng', name: 'Инженер-механик сети АЗС', dept: 'retail', itr: true, salary: 140000, need: a => Math.ceil((a.azs || 0) / 6) },
+    { key: 'azsmgr', name: 'Управляющий АЗС', dept: 'retail', itr: true, salary: 90000, need: a => a.azs || 0 },
+    // АЗС: рабочие
+    { key: 'azstech', name: 'Техник по обслуживанию ТРК', dept: 'retail', salary: 75000, need: a => Math.ceil((a.azs || 0) / 3) },
+    { key: 'azselec', name: 'Электромонтёр АЗС', dept: 'retail', salary: 70000, need: a => Math.ceil((a.azs || 0) / 4) },
     { key: 'npzop', name: 'Оператор технологических установок НПЗ', dept: 'npz', salary: 85000, need: a => a.npz * 12 + a.npzUnits * 5 },
     { key: 'azsop', name: 'Оператор АЗС', dept: 'retail', salary: 55000, need: a => a.azsStaff },
     { key: 'gasop', name: 'Оператор по добыче и подготовке газа', dept: 'gas', salary: 72000, need: a => a.uppg + a.mks + (a.gfu || 0) + a.gwellsOn > 0 ? 1 + a.uppg * 3 + a.mks * 2 + (a.gfu || 0) * 3 + Math.ceil(a.gwellsOn / 5) : 1 }
@@ -28,7 +53,7 @@
   const DEPTS = {
     cdng: 'ЦДНГ — добыча', prs: 'Бригады ПРС', ckppn: 'ЦКППН — подготовка', ppd: 'ЦППД — закачка',
     energy: 'Энергослужба', repair: 'ПРЦЭО — ремонт', hse: 'Служба ОТ и ПБ', geo: 'ЦНИПР — геология',
-    mts: 'Склад МТС', trans: 'Транспорт', aup: 'Аппарат управления', gas: 'ЦДПиТГ — газ', soc: 'Быт: столовая и общежития', npz: 'НПЗ', retail: 'Розница (АЗС)'
+    mts: 'Склад МТС', trans: 'Транспорт', aup: 'Аппарат управления', gas: 'ЦДПиТГ — газ', soc: 'Быт: столовая и общежития', npz: 'НПЗ', retail: 'Розница (АЗС)', sec: 'Служба безопасности (СБ)'
   };
 
   /* ---------- Материалы склада ---------- */
@@ -40,6 +65,11 @@
     { key: 'cable',  name: 'Кабель погружной',         unit: 'бухта', price: 850000,  min: 1,    group: 'Ремонт скважин', tech: 'ecn' },
     { key: 'skparts',name: 'Запчасти СК (редуктор, ремни)', unit: 'компл', price: 250000, min: 3, group: 'Оборудование' },
     { key: 'pparts', name: 'Запчасти насосов',          unit: 'компл', price: 300000,  min: 2,    group: 'Оборудование' },
+    { key: 'npzparts', name: 'Запчасти и материалы НПЗ',  unit: 'компл', price: 400000,  min: 3,    group: 'НПЗ и АЗС' },
+    { key: 'trkparts', name: 'Запчасти ТРК (АЗС)',        unit: 'компл', price: 120000,  min: 2,    group: 'НПЗ и АЗС' },
+    { key: 'npzreag',  name: 'Реагенты ЭЛОУ (деэмульгатор, щёлочь)', unit: 'т', price: 900000, min: 2, group: 'НПЗ и АЗС' },
+    { key: 'npzadd',   name: 'Присадки к топливу',        unit: 'т',     price: 2200000, min: 3,    group: 'НПЗ и АЗС' },
+    { key: 'trkcons',  name: 'Фильтры и пистолеты ТРК',   unit: 'компл', price: 45000,   min: 4,    group: 'НПЗ и АЗС' },
     { key: 'vparts', name: 'Запчасти автотехники',      unit: 'компл', price: 180000,  min: 6,    group: 'Оборудование' },
     { key: 'demulg', name: 'Деэмульгатор',             unit: 'кг',    price: 900,     min: 2500, group: 'Химреагенты' },
     { key: 'inhib',  name: 'Ингибитор коррозии',       unit: 'кг',    price: 1100,    min: 800,  group: 'Химреагенты' },
@@ -69,8 +99,8 @@
     gtes:     { name: 'ГТЭС на попутном газе 4 МВт',  cat: 'power', cost: 600e6, days: 90, kw: 0,  icon: 'gtes', cap: 4000, tech: 'gtes', desc: 'Собственная генерация на попутном газе. Дешёвая энергия, не зависит от сети.' },
     ses:      { name: 'Солнечная станция 1 МВт',      cat: 'power', cost: 280e6, days: 50, kw: 0,  icon: 'ses', cap: 1000, tech: 'ses', desc: 'Средняя выдача ~25% от пиковой. Бесплатная энергия.' },
     gascomp:  { name: 'МКС — компрессорная ПНГ',      cat: 'build', cost: 320e6, days: 55, kw: 180, icon: 'gas', cap: 25000, desc: 'Сжимает попутный газ 0,2 → 0,9 МПа и подаёт в газопровод: до 25 000 м³/сут.' },
-    gfu:      { name: 'ГФУ — установка получения СУГ', cat: 'build', cost: 420e6, days: 70, kw: 140, icon: 'gas', cap: 40000, desc: 'Извлекает пропан-бутан из попутного газа: до 40 тыс. м³/сут ПНГ, ~0,28 кг СУГ с каждого м³. Сухой газ — дальше на МКС или факел.' },
-    lpg_tank: { name: 'Ёмкости СУГ 2×100 м³',          cat: 'build', cost: 60e6,  days: 30, kw: 2,   icon: 'ckppn', lpgCap: 100, desc: 'Подземные ёмкости пропан-бутана: +100 т хранения СУГ.' },
+    gfu:      { name: 'ГФУ — установка получения СУГ', short: 'ГФУ', cat: 'build', cost: 420e6, days: 70, kw: 140, icon: 'gas', cap: 40000, need: ['gascomp', 'lpg_tank'], desc: 'Стоит после МКС: из сжатого попутного газа извлекает пропан-бутан (~0,28 кг/м³), сухой газ уходит в газопровод. До 40 тыс. м³/сут.' },
+    lpg_tank: { name: 'Ёмкости СУГ 2×100 м³', short: 'Ёмкости СУГ', cat: 'build', cost: 60e6,  days: 30, kw: 2,   icon: 'ckppn', lpgCap: 100, desc: 'Подземные ёмкости пропан-бутана: +100 т хранения СУГ.' },
     uppg:     { name: 'УППГ — подготовка газа',       cat: 'build', cost: 480e6, days: 80, kw: 90,  icon: 'gas', cap: 300000, desc: 'Осушка природного газа: сепарация, охлаждение, ДЭГ. До 300 тыс. м³/сут, 22 скважины.' },
     npz:      { name: 'Мини-НПЗ (ЭЛОУ-АТ)',           cat: 'build', cost: 1.8e9, days: 150, kw: 500, icon: 'npz', cap: 400, desc: 'Обессоливание и атмосферная перегонка 400 т/сут. Парк продуктов 8 000 т.' },
     npz_vac:  { name: 'Вакуумный блок (ВТ)',          cat: 'build', cost: 0.6e9, days: 90,  kw: 180, icon: 'npz', cap: 230, req: 'npz', desc: 'Делит мазут на вакуумный газойль и гудрон — сырьё для крекинга и битума.' },
@@ -215,6 +245,19 @@
 
   // место АЗС: стоимость и спрос
   const AZS_LOC = { city: { name: 'город', cost: 1.6, d: 1.4 }, road: { name: 'трасса', cost: 1, d: 1, summer: 1.15 }, village: { name: 'посёлок', cost: 0.6, d: 0.55 } };
+  // договоры на нефтепродукты НПЗ: страны СНГ (экспорт, ж/д франко-граница), госзаказчики и внутренние частные покупатели. Компании вымышлены.
+  // fr — ж/д тариф до покупателя, ₸/т в ценах 2000 г.; ron — мин. октан бензина, sul — макс. сера ДТ, ppm: до 2008 г. (ГОСТ 305), 2008–2015, с 2016 (техрегламент К4/К5)
+  const PC_COUNTRIES = {
+    KZ: { name: 'Казахстан', fr: 0, ron: 92, sul: [5000, 350, 50], priv: ['ТОО «Жетысу Агро»', 'ТОО «Степной Логистик»', 'ТОО «Каспий Строй Сервис»', 'ТОО «Ертис Мунай Трейд»', 'ТОО «Сарыарка Агро»', 'ТОО «Тараз Авто Транс»', 'ТОО «Каспий Бункер»', 'ТОО «Алтын Дала Трейд»'] },
+    RU: { name: 'Россия', fr: 3500, ron: 92, sul: [2000, 350, 10], gov: 'ФГУП «Южуралтопливо»', priv: ['ООО «Волга-Транзит Ойл»', 'ООО «Оренбург Петрол Трейд»'] },
+    UZ: { name: 'Узбекистан', fr: 3000, ron: 80, sul: [5000, 2000, 350], gov: 'ГАК «Зарафшан Нефтеснаб»', priv: ['OOO «Fergana Petrol Trade»', 'OOO «Chirchiq Fuel»'] },
+    KG: { name: 'Кыргызстан', fr: 2800, ron: 80, sul: [5000, 2000, 350], gov: 'ГП «Тянь-Шань Нефтерезерв»', priv: ['ОсОО «Иссык-Куль Ойл»', 'ОсОО «Ала-Тоо Петролеум»'] },
+    TJ: { name: 'Таджикистан', fr: 4500, ron: 80, sul: [5000, 5000, 2000], gov: 'ГУП «Памир Энергоресурс»', priv: ['ООО «Душанбе Трейд Петролеум»'] },
+    AZ: { name: 'Азербайджан', fr: 5500, ron: 92, sul: [2000, 350, 50], gov: 'ГК «Апшерон Нефтеснаб»', priv: ['Caspian Bridge Trading LLC'] },
+    AM: { name: 'Армения', fr: 7500, ron: 92, sul: [2000, 350, 50], gov: 'ЗАО «Арарат Энерготрейд»', priv: ['ООО «Севан Ойл»'] },
+    BY: { name: 'Беларусь', fr: 7000, ron: 92, sul: [2000, 350, 10], gov: 'РУП «Полесье Нефтесбыт»', priv: ['ЧТУП «Неман Петролеум»'] },
+    MD: { name: 'Молдова', fr: 8000, ron: 92, sul: [2000, 350, 50], gov: 'ГП «Днестр Топливо»', priv: ['SRL «Prut Fuel»'] }
+  };
   const EXCHANGE = 'Центрально-Азиатская фондовая биржа';
   // автопарк: спецтехника и легковой транспорт
   const VEH = {
@@ -224,7 +267,8 @@
     ppu:  { name: 'Паропередвижная установка',     short: 'ППУ',          tank: 250, cost: 34e6, fuel: 45, km: 50,  kind: 'heavy', color: '#8a2b2b', need: a => Math.max(1, Math.ceil(a.wells / 50)), desc: 'Пропарка, депарафинизация' },
     kran: { name: 'Автокран 25 т',                 short: 'Автокран',     tank: 300, cost: 52e6, fuel: 35, km: 30,  kind: 'crane', color: '#e8c12b', need: a => 1 + Math.floor(a.fac / 40), desc: 'Монтаж и погрузка' },
     bus:  { name: 'Вахтовый автобус',              short: 'Вахтовка',     tank: 200, cost: 22e6, fuel: 40, km: 160, kind: 'bus',   color: '#e8892b', need: a => Math.max(1, Math.ceil(a.staff / 30)), desc: 'Доставка смены на промысел' },
+    fire: { name: 'Пожарная автоцистерна НПЗ',    short: 'Пожарная',     tank: 200, cost: 25e6, fuel: 8,  km: 10,  kind: 'tank',  color: '#c62828', need: a => (a.npz > 0 ? 1 : 0), desc: 'Обязательна для НПЗ по пожарной безопасности' },
     car:  { name: 'Легковой автомобиль',           short: 'Легковая',     tank: 55, cost: 8e6,  fuel: 12, km: 140, kind: 'car',   color: '#9fb6c9', need: a => Math.max(1, Math.ceil(a.staff / 25)), desc: 'Мастера, начальники, АУП' }
   };
-  root.OMData = { VEH, AZS_LOC, EXCHANGE, DEPOSITS, DRILLS, AUTHORITIES, FIRST_M, FIRST_F, LAST, PENSION, CHIEF_FIRST, CHIEF_LAST, CHIEF_SALARY, ROLES, DEPTS, MATERIALS, BUILD, TANK_PURPOSE, SERVICES, CONTRACTORS, TECH, BRENT, FX, CHANNELS, BUYERS, NAME_A, NAME_B, FIELD_NAMES, GOALS };
+  root.OMData = { PC_COUNTRIES, VEH, AZS_LOC, EXCHANGE, DEPOSITS, DRILLS, AUTHORITIES, FIRST_M, FIRST_F, LAST, PENSION, CHIEF_FIRST, CHIEF_LAST, CHIEF_SALARY, ROLES, DEPTS, MATERIALS, BUILD, TANK_PURPOSE, SERVICES, CONTRACTORS, TECH, BRENT, FX, CHANNELS, BUYERS, NAME_A, NAME_B, FIELD_NAMES, GOALS };
 })(typeof window !== 'undefined' ? window : globalThis);
